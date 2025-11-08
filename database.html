@@ -86,7 +86,16 @@ tbody tr:hover {background: rgba(102,126,234,0.08);}
       
       <button onclick="applyFilters()">Apply Filter</button>
       <button onclick="refreshData()">🔄 Refresh</button>
-      <button id="downloadAll">💾 Download All CSV</button>
+
+      <!-- CSV Download Buttons -->
+      <label>Download CSV:</label>
+      <select id="downloadDay">
+        <option value="">All Days</option>
+        <option value="1">Day 1</option>
+        <option value="2">Day 2</option>
+        <option value="3">Day 3</option>
+      </select>
+      <button id="downloadCSV">💾 Download</button>
     </div>
   </div>
 
@@ -125,101 +134,72 @@ let dayFilter = '';
 
 async function fetchData(page = 1) {
   try {
-    const params = new URLSearchParams({
-      page: page,
-      per_page: perPage
-    });
-    
-    if (dayFilter) params.append('day', dayFilter);
-    
-    const response = await fetch(`/api/all-records?${params}`);
-    const data = await response.json();
-    
+    const params = new URLSearchParams({ page, per_page: perPage });
+    if(dayFilter) params.append('day', dayFilter);
+    const res = await fetch(`/api/all-records?${params}`);
+    const data = await res.json();
+
     currentPage = data.page;
     totalPages = data.total_pages;
-    
+
     document.getElementById('totalRecords').textContent = data.total.toLocaleString();
     document.getElementById('currentPage').textContent = currentPage;
     document.getElementById('totalPages').textContent = totalPages;
     document.getElementById('perPage').textContent = perPage;
-    
+
     const daySelect = document.getElementById('dayFilter');
     const currentValue = daySelect.value;
     daySelect.innerHTML = '<option value="">All Days</option>';
-    data.available_days.forEach(day => {
+    data.available_days.forEach(day=>{
       const option = document.createElement('option');
       option.value = day;
       option.textContent = day;
       if(day===currentValue) option.selected=true;
       daySelect.appendChild(option);
     });
-    
+
     const tbody = document.getElementById('tableBody');
     tbody.innerHTML = '';
-    if(data.records.length===0) {
-      tbody.innerHTML = '<tr><td colspan="6" class="loading">No records found</td></tr>';
+    if(!data.records.length) {
+      tbody.innerHTML='<tr><td colspan="6" class="loading">No records found</td></tr>';
       return;
     }
-    
-    data.records.forEach(record => {
+    data.records.forEach(record=>{
       const row = document.createElement('tr');
-      row.innerHTML = `
+      row.innerHTML=`
         <td>#${record.id}</td>
         <td>${record.ts_utc}</td>
         <td><span class="day-badge">${record.day}</span></td>
         <td>${Number(record.latitude).toFixed(4)}°</td>
         <td>${Number(record.longitude).toFixed(4)}°</td>
-        <td>${record.altitude !== null ? Number(record.altitude).toFixed(2) + ' km' : '—'}</td>
+        <td>${record.altitude!==null?Number(record.altitude).toFixed(2)+' km':'—'}</td>
       `;
       tbody.appendChild(row);
     });
-    
-    document.getElementById('pageInfo').textContent = `Page ${currentPage} of ${totalPages}`;
-    document.getElementById('firstBtn').disabled = currentPage===1;
-    document.getElementById('prevBtn').disabled = currentPage===1;
-    document.getElementById('nextBtn').disabled = currentPage===totalPages;
-    document.getElementById('lastBtn').disabled = currentPage===totalPages;
 
-  } catch (error) {
-    console.error('Error fetching data:', error);
-    document.getElementById('tableBody').innerHTML = 
-      '<tr><td colspan="6" class="loading" style="color:#ef4444;">Error loading data. Please refresh.</td></tr>';
-  }
-}
+    document.getElementById('pageInfo').textContent=`Page ${currentPage} of ${totalPages}`;
+    document.getElementById('firstBtn').disabled=currentPage===1;
+    document.getElementById('prevBtn').disabled=currentPage===1;
+    document.getElementById('nextBtn').disabled=currentPage===totalPages;
+    document.getElementById('lastBtn').disabled=currentPage===totalPages;
 
-function goToPage(page) { if(page>=1 && page<=totalPages) fetchData(page); }
-function goToNext(){ goToPage(currentPage+1); }
-function goToPrev(){ goToPage(currentPage-1); }
-function applyFilters() {
-  dayFilter=document.getElementById('dayFilter').value;
-  perPage=parseInt(document.getElementById('perPageSelect').value);
-  fetchData(1);
-}
-function refreshData(){ fetchData(currentPage); }
-
-// Download all CSV
-document.getElementById('downloadAll').addEventListener('click', async () => {
-  try {
-    const res = await fetch('/api/last3days');
-    const data = await res.json();
-    if(!data.length) return alert('No data to download.');
-
-    const headers = Object.keys(data[0]);
-    const csvRows = [
-      headers.join(','),
-      ...data.map(row => headers.map(h => row[h]).join(','))
-    ];
-    const csvString = csvRows.join('\n');
-    const blob = new Blob([csvString], {type:'text/csv'});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'iss_data_last3days.csv';
-    a.click();
-    URL.revokeObjectURL(url);
   } catch(err) {
-    console.error('Download failed', err);
+    console.error(err);
+    document.getElementById('tableBody').innerHTML='<tr><td colspan="6" class="loading" style="color:#ef4444;">Error loading data.</td></tr>';
   }
+}
+
+function goToPage(page){if(page>=1&&page<=totalPages) fetchData(page);}
+function goToNext(){goToPage(currentPage+1);}
+function goToPrev(){goToPage(currentPage-1);}
+function applyFilters(){dayFilter=document.getElementById('dayFilter').value; perPage=parseInt(document.getElementById('perPageSelect').value); fetchData(1);}
+function refreshData(){fetchData(currentPage);}
+
+// Download CSV button
+document.getElementById('downloadCSV').addEventListener('click',()=>{
+  const day = document.getElementById('downloadDay').value;
+  const url = day? `/api/download?day=${day}` : '/api/download';
+  window.open(url,'_blank');
 });
 
 // Initial load
@@ -228,3 +208,4 @@ setInterval(()=>fetchData(currentPage),30000);
 </script>
 </body>
 </html>
+
