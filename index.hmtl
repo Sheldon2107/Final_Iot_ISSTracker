@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ISS Tracker 🌍</title>
+  <link rel="icon" href="https://upload.wikimedia.org/wikipedia/commons/d/d0/International_Space_Station.svg" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <style>
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      background-color: #0b1120;
+      color: #fff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    header {
+      text-align: center;
+      padding: 20px;
+      font-size: 1.8em;
+      font-weight: bold;
+      letter-spacing: 1px;
+      color: #00c3ff;
+      text-shadow: 0 0 10px #00c3ff;
+    }
+    #map {
+      height: 65vh;
+      width: 95%;
+      border-radius: 12px;
+      box-shadow: 0 0 20px rgba(0, 195, 255, 0.3);
+    }
+    .analytics {
+      margin-top: 20px;
+      width: 95%;
+      background-color: #111a33;
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 0 15px rgba(0, 195, 255, 0.3);
+      display: flex;
+      flex-direction: column;
+      gap: 25px;
+    }
+    .section {
+      background-color: #0b1428;
+      padding: 15px;
+      border-radius: 10px;
+    }
+    h2 {
+      color: #00c3ff;
+      margin-bottom: 10px;
+      font-size: 1.2em;
+      text-transform: uppercase;
+    }
+    .info {
+      font-size: 1em;
+      line-height: 1.6;
+    }
+    canvas {
+      background-color: #fff;
+      border-radius: 8px;
+      padding: 10px;
+    }
+    .controls {
+      margin-top: 15px;
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+    }
+    button {
+      background: linear-gradient(90deg, #007bff, #00c3ff);
+      color: #fff;
+      border: none;
+      padding: 10px 15px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 0.95em;
+      transition: transform 0.2s ease;
+    }
+    button:hover {
+      transform: scale(1.05);
+    }
+  </style>
+</head>
+<body>
+  <header>🛰 International Space Station Live Tracker</header>
+
+  <div id="map"></div>
+
+  <div class="analytics">
+    <div class="section">
+      <h2>📊 Playback Controls</h2>
+      <div class="controls">
+        <button onclick="startPlayback()">▶️ Start</button>
+        <button onclick="pausePlayback()">⏸ Pause</button>
+        <button onclick="resetPlayback()">🔁 Reset</button>
+      </div>
+      <div class="controls">
+        <a href="/database">
+          <button>📁 View All Database Records</button>
+        </a>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>📈 ISS Altitude Chart (Last 3 Days)</h2>
+      <canvas id="altitudeChart"></canvas>
+    </div>
+
+    <div class="section">
+      <h2>🧭 Current Position</h2>
+      <div class="info" id="currentPosition">Fetching latest data...</div>
+    </div>
+  </div>
+
+  <script>
+    // Initialize map
+    const map = L.map('map').setView([0, 0], 2);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 5,
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+
+    const issIcon = L.icon({
+      iconUrl: 'https://upload.wikimedia.org/wikipedia/commons/d/d0/International_Space_Station.svg',
+      iconSize: [50, 50],
+      iconAnchor: [25, 25]
+    });
+
+    let issMarker = L.marker([0, 0], { icon: issIcon }).addTo(map);
+    let pathLine = L.polyline([], { color: '#00c3ff', weight: 2 }).addTo(map);
+
+    // Chart.js setup
+    const ctx = document.getElementById('altitudeChart');
+    const altitudeChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [{
+          label: 'Altitude (km)',
+          data: [],
+          borderColor: '#00c3ff',
+          backgroundColor: 'rgba(0, 195, 255, 0.2)',
+          tension: 0.3
+        }]
+      },
+      options: {
+        responsive: true,
+        scales: {
+          x: { ticks: { color: '#000' } },
+          y: { ticks: { color: '#000' } }
+        }
+      }
+    });
+
+    async function fetchCurrentPosition() {
+      const res = await fetch('/api/current');
+      const data = await res.json();
+
+      if (!data.latitude || !data.longitude) return;
+
+      issMarker.setLatLng([data.latitude, data.longitude]);
+      map.setView([data.latitude, data.longitude], 3);
+      pathLine.addLatLng([data.latitude, data.longitude]);
+
+      document.getElementById('currentPosition').innerHTML = `
+        <b>Latitude:</b> ${data.latitude.toFixed(3)}°<br>
+        <b>Longitude:</b> ${data.longitude.toFixed(3)}°<br>
+        <b>Altitude:</b> ${data.altitude ? data.altitude.toFixed(2) + ' km' : 'N/A'}<br>
+        <b>Time (UTC):</b> ${data.ts_utc}
+      `;
+    }
+
+    async function fetchLast3Days() {
+      const res = await fetch('/api/last3days');
+      const data = await res.json();
+
+      altitudeChart.data.labels = data.map(p => p.ts_utc);
+      altitudeChart.data.datasets[0].data = data.map(p => p.altitude || 408);
+      altitudeChart.update();
+    }
+
+    // Auto-update ISS position every 60s
+    fetchCurrentPosition();
+    fetchLast3Days();
+    setInterval(fetchCurrentPosition, 60000);
+
+    // Playback (for visualization demo)
+    let playbackIndex = 0;
+    let playbackTimer = null;
+    async function startPlayback() {
+      if (playbackTimer) return;
+      const res = await fetch('/api/last3days');
+      const data = await res.json();
+      playbackTimer = setInterval(() => {
+        if (playbackIndex >= data.length) {
+          clearInterval(playbackTimer);
+          playbackTimer = null;
+          return;
+        }
+        const point = data[playbackIndex++];
+        issMarker.setLatLng([point.latitude, point.longitude]);
+        pathLine.addLatLng([point.latitude, point.longitude]);
+      }, 100);
+    }
+    function pausePlayback() {
+      if (playbackTimer) {
+        clearInterval(playbackTimer);
+        playbackTimer = null;
+      }
+    }
+    function resetPlayback() {
+      pausePlayback();
+      playbackIndex = 0;
+      pathLine.setLatLngs([]);
+      fetchCurrentPosition();
+    }
+  </script>
+</body>
+</html>
