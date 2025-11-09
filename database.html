@@ -31,7 +31,6 @@ tbody tr {transition:background 0.2s ease;}
 tbody tr:hover {background: rgba(102,126,234,0.08);}
 
 .day-badge {background: rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.3);padding:4px 10px;border-radius:8px;font-weight:600;color:#10b981;display:inline-block;font-size:11px;}
-
 .loading {text-align:center;padding:60px;font-size:18px;color:rgba(232,234,246,0.6);}
 
 .day-navigation {display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;}
@@ -58,15 +57,14 @@ tbody tr:hover {background: rgba(102,126,234,0.08);}
     </div>
     <div class="stat-box">
       <div class="stat-label">Total Pages</div>
-      <div class="stat-value" id="totalPages">3</div>
+      <div class="stat-value">3</div>
     </div>
     <div class="stat-box">
       <div class="stat-label">Records/Page</div>
-      <div class="stat-value" id="perPage">500</div>
+      <div class="stat-value">500</div>
     </div>
   </div>
 
-  <!-- Day Navigation moved to top of table -->
   <div class="day-navigation">
     <button id="prevDay">← Previous</button>
     <div>Day <span id="currentDay">1</span> of 3</div>
@@ -97,20 +95,28 @@ let currentDay = 1;
 const totalDays = 3;
 const perPage = 500;
 
-async function fetchDataForDay(day) {
+// Compute date string from day index (1 = oldest, 3 = newest)
+function getDayString(dayIndex) {
+  const d = new Date();
+  d.setDate(d.getDate() - (totalDays - dayIndex));
+  return d.toISOString().split('T')[0]; // YYYY-MM-DD
+}
+
+async function fetchDataForDay(dayIndex) {
+  const dayStr = getDayString(dayIndex);
   try {
-    const params = new URLSearchParams({ day: day, per_page: perPage });
+    const params = new URLSearchParams({ day: dayStr });
     const res = await fetch(`/api/all-records?${params}`);
     const data = await res.json();
 
     document.getElementById('totalRecords').textContent = data.total.toLocaleString();
-    document.getElementById('currentPage').textContent = day;
-    document.getElementById('currentDay').textContent = day;
+    document.getElementById('currentPage').textContent = dayIndex;
+    document.getElementById('currentDay').textContent = dayIndex;
 
     const tbody = document.getElementById('tableBody');
     tbody.innerHTML = '';
 
-    if (data.records.length === 0) {
+    if (!data.records || data.records.length === 0) {
       tbody.innerHTML = '<tr><td colspan="6" class="loading">No records found</td></tr>';
       return;
     }
@@ -128,14 +134,13 @@ async function fetchDataForDay(day) {
       tbody.appendChild(row);
     });
 
-    // Update navigation buttons
-    document.getElementById('prevDay').disabled = day === 1;
-    document.getElementById('nextDay').disabled = day === totalDays;
+    document.getElementById('prevDay').disabled = dayIndex === 1;
+    document.getElementById('nextDay').disabled = dayIndex === totalDays;
 
-  } catch (error) {
-    console.error('Error fetching data:', error);
+  } catch (err) {
+    console.error(err);
     document.getElementById('tableBody').innerHTML =
-      '<tr><td colspan="6" class="loading" style="color:#ef4444;">Error loading data. Please refresh.</td></tr>';
+      '<tr><td colspan="6" class="loading" style="color:#ef4444;">Error loading data</td></tr>';
   }
 }
 
@@ -145,6 +150,7 @@ document.getElementById('prevDay').addEventListener('click', () => {
     fetchDataForDay(currentDay);
   }
 });
+
 document.getElementById('nextDay').addEventListener('click', () => {
   if (currentDay < totalDays) {
     currentDay++;
