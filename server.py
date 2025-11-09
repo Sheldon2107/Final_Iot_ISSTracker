@@ -1,138 +1,125 @@
-from flask import Flask, jsonify, send_file, request
-import requests
-from datetime import datetime, timedelta
-import threading
+import os
 import csv
-import io
+import json
+import time
+import threading
+from datetime import datetime, timedelta
+from flask import Flask, jsonify, request, send_from_directory
+
+import requests
 
 app = Flask(__name__)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# --- Configuration ---
-RECORD_INTERVAL = 1  # seconds
-MAX_RECORDS_PER_DAY = 1000
+# ---- CONFIG ----
+RECORDS_PER_DAY = 1000
+TOTAL_DAYS = 3
+FETCH_INTERVAL = 3  # seconds (use ~3s to respect rate limit)
+DATA_FILE = os.path.join(BASE_DIR, 'iss_data.json')
 
-# --- In-memory storage ---
-# Structure: {'YYYY-MM-DD': [records]}
-data_store = {}
+# ---- DATA STORAGE ----
+# Structure: { "day1": [...], "day2": [...], "day3": [...] }
+if os.path.exists(DATA_FILE):
+    with open(DATA_FILE, 'r') as f:
+        iss_data = json.load(f)
+else:
+    iss_data = {f"day{i+1}": [] for i in range(TOTAL_DAYS)}
 
-# --- Helper functions ---
-def fetch_iss_data():
-    try:
-        res = requests.get('https://api.wheretheiss.at/v1/satellites/25544')
-        if res.status_code == 200:
-            d = res.json()
-            ts_utc = datetime.utcfromtimestamp(d['timestamp']).strftime('%Y-%m-%d %H:%M:%S')
-            record = {
-                'id': None,  # Will assign below
-                'ts_utc': ts_utc,
-                'day': None,  # Will assign below
-                'latitude': d['latitude'],
-                'longitude': d['longitude'],
-                'altitude': d['altitude']
-            }
+# Helper to save data
+def save_data():
+    with open(DATA_FILE, 'w') as f:
+        json.dump(iss_data, f, indent=2)
 
-            # Determine current UTC day
-            today_str = datetime.utcnow().strftime('%Y-%m-%d')
-            if today_str not in data_store:
-                data_store[today_str] = []
+# ---- Determine current day (based on first deploy date) ----
+DEPLOY_DATE = datetime.utcnow()
+def get_current_day():
+    delta = datetime.utcnow() - DEPLOY_DATE
+    day_index = min(delta.days, TOTAL_DAYS - 1)
+    return f"day{day_index + 1}"
 
-            # Assign ID and day
-            record['id'] = len(data_store[today_str]) + 1
-            # Day number: first recorded day = Day 1
-            day_num = len(data_store)
-            record['day'] = f"Day {day_num}"
+# ---- ISS FETCH THREAD ----
+def fetch_iss():
+    while True:
+        try:
+            day_key = get_current_day()
+            if len(iss_data[day_key]) < RECORDS_PER_DAY:
+                res = requests.get("https://api.wheretheiss.at/v1/satellites/25544")
+                if res.status_code == 200:
+                    d = res.json()
+                    record = {
+                        "id": len(iss_data[day_key]) + 1,
+                        "ts_utc": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+                        "day": day_key,
+                        "latitude": d.get("latitude"),
+                        "longitude": d.get("longitude"),
+                        "altitude": d.get("altitude")
+                    }
+                    iss_data[day_key].append(record)
+                    save_data()
+            time.sleep(FETCH_INTERVAL)
+        except Exception as e:
+            print("Error fetching ISS data:", e)
+            time.sleep(FETCH_INTERVAL)
 
-            # Append record
-            data_store[today_str].append(record)
+threading.Thread(target=fetch_iss, daemon=True).start()
 
-            # Keep only MAX_RECORDS_PER_DAY for display purposes
-            if len(data_store[today_str]) > MAX_RECORDS_PER_DAY:
-                data_store[today_str] = data_store[today_str][:MAX_RECORDS_PER_DAY]
-
-    except Exception as e:
-        print("Error fetching ISS data:", e)
-
-def start_fetching():
-    def run():
-        while True:
-            fetch_iss_data()
-            threading.Event().wait(RECORD_INTERVAL)
-    thread = threading.Thread(target=run)
-    thread.daemon = True
-    thread.start()
-
-# --- API Endpoints ---
-@app.route('/api/last3days')
-def last3days():
-    # Return last 3 days combined in a list
-    sorted_days = sorted(data_store.keys())
-    result = []
-    for day in sorted_days[-3:]:
-        result.extend(data_store[day])
-    return jsonify(result)
-
-@app.route('/api/all-records')
-def all_records():
-    per_page = int(request.args.get('per_page', MAX_RECORDS_PER_DAY))
-    day = request.args.get('day', None)
-    sorted_days = sorted(data_store.keys())
-
-    available_days = [f"Day {i+1}" for i in range(len(sorted_days))]
-
-    if day:
-        # Find the date string for this day
-        day_index = int(day.split(' ')[1]) - 1
-        if day_index < len(sorted_days):
-            records = data_store[sorted_days[day_index]][:per_page]
-        else:
-            records = []
-    else:
-        # Default: latest day
-        records = data_store[sorted_days[-1]][:per_page] if sorted_days else []
-
-    return jsonify({'records': records, 'available_days': available_days})
-
-@app.route('/api/download-csv')
-def download_csv():
-    all_flag = request.args.get('all', '0') == '1'
-    day = request.args.get('day', None)
-    sorted_days = sorted(data_store.keys())
-
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(['Record ID', 'Timestamp (UTC)', 'Day', 'Latitude', 'Longitude', 'Altitude (km)'])
-
-    if all_flag:
-        for d in sorted_days:
-            for r in data_store[d]:
-                writer.writerow([r['id'], r['ts_utc'], r['day'], r['latitude'], r['longitude'], r['altitude']])
-    elif day:
-        day_index = int(day.split(' ')[1]) - 1
-        if day_index < len(sorted_days):
-            for r in data_store[sorted_days[day_index]]:
-                writer.writerow([r['id'], r['ts_utc'], r['day'], r['latitude'], r['longitude'], r['altitude']])
-    else:
-        # default latest day
-        if sorted_days:
-            for r in data_store[sorted_days[-1]]:
-                writer.writerow([r['id'], r['ts_utc'], r['day'], r['latitude'], r['longitude'], r['altitude']])
-
-    output.seek(0)
-    return send_file(io.BytesIO(output.getvalue().encode('utf-8')),
-                     mimetype='text/csv',
-                     as_attachment=True,
-                     download_name='iss_data.csv')
-
-# --- Routes for HTML ---
+# ---- ROUTES ----
 @app.route('/')
 def index():
-    return app.send_static_file('index.html')
+    return send_from_directory(BASE_DIR, 'index.html')
 
 @app.route('/database')
 def database():
-    return app.send_static_file('database.html')
+    return send_from_directory(BASE_DIR, 'database.html')
 
-# --- Main ---
+@app.route('/api/last3days')
+def api_last3days():
+    # Return combined data from all days
+    all_records = []
+    for day in iss_data.values():
+        all_records.extend(day)
+    return jsonify(all_records)
+
+@app.route('/api/all-records')
+def api_all_records():
+    per_page = int(request.args.get('per_page', RECORDS_PER_DAY))
+    day_param = request.args.get('day')
+    available_days = [f"day{i+1}" for i in range(TOTAL_DAYS)]
+
+    records = []
+    if day_param and day_param in iss_data:
+        records = iss_data[day_param][:per_page]
+    else:
+        # combine all days
+        for day in available_days:
+            records.extend(iss_data[day][:per_page])
+
+    return jsonify({
+        "available_days": available_days,
+        "records": records
+    })
+
+@app.route('/api/download-csv')
+def api_download_csv():
+    day_param = request.args.get('day')
+    all_param = request.args.get('all')
+    filename = f"iss_data_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.csv"
+    filepath = os.path.join(BASE_DIR, filename)
+
+    rows = []
+    if all_param == "1" or not day_param:
+        for day in iss_data:
+            rows.extend(iss_data[day])
+    elif day_param in iss_data:
+        rows.extend(iss_data[day_param])
+
+    with open(filepath, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(["Record ID", "Timestamp UTC", "Day", "Latitude", "Longitude", "Altitude km"])
+        for r in rows:
+            writer.writerow([r["id"], r["ts_utc"], r["day"], r["latitude"], r["longitude"], r["altitude"]])
+
+    return send_from_directory(BASE_DIR, filename, as_attachment=True)
+
 if __name__ == '__main__':
-    start_fetching()
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(debug=True, host='0.0.0.0', port=int(os.environ.get("PORT", 5000)))
