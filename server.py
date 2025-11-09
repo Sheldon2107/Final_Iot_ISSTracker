@@ -6,7 +6,7 @@ import logging
 import requests
 from datetime import datetime, timedelta
 from threading import Thread, Event
-from flask import Flask, jsonify, send_file, request, Response
+from flask import Flask, jsonify, send_file, send_from_directory, request, Response
 from flask_cors import CORS
 import csv
 from io import StringIO
@@ -14,7 +14,7 @@ from io import StringIO
 # ---------- Configuration ----------
 DB_PATH = os.environ.get("DB_PATH", "iss_data.db")
 API_URL = os.environ.get("ISS_API_URL", "https://api.wheretheiss.at/v1/satellites/25544")
-FETCH_INTERVAL = int(os.environ.get("FETCH_INTERVAL_SEC", "60"))  # default 1 minute
+FETCH_INTERVAL = int(os.environ.get("FETCH_INTERVAL_SEC", "60"))
 MAX_RETENTION_DAYS = int(os.environ.get("MAX_RETENTION_DAYS", "3"))
 SAMPLE_DATA = os.environ.get("SAMPLE_DATA", "0") == "1"
 PORT = int(os.environ.get("PORT", "10000"))
@@ -142,7 +142,7 @@ def generate_csv(rows):
 
 @app.route("/api/download")
 def download_csv():
-    day_filter = request.args.get("day")  # optional, e.g., ?day=2025-11-09
+    day_filter = request.args.get("day")
     conn = get_conn()
     cur = conn.cursor()
     if day_filter:
@@ -170,8 +170,51 @@ def download_csv():
         headers={"Content-Disposition": f"attachment;filename={filename}"}
     )
 
-# ---------- Other API endpoints remain unchanged ----------
-# ... you can keep all /api/current, /api/all-records, /api/stats, etc.
+# ---------- 3-day preview API ----------
+@app.route("/api/preview")
+def preview_data():
+    """
+    Returns records for 3 days max, 500 records per day.
+    Query parameter: day_index=0..2
+    """
+    day_index = int(request.args.get("day_index", 0))
+    conn = get_conn()
+    cur = conn.cursor()
+    # Get last 3 days with data
+    cur.execute("""
+        SELECT DISTINCT day FROM iss_positions
+        ORDER BY day ASC
+        LIMIT ?
+    """, (MAX_RETENTION_DAYS,))
+    days = [r["day"] for r in cur.fetchall()]
+    if not days:
+        return jsonify({"records": [], "day": None, "day_index": 0, "total_days": 0})
+
+    # Clamp day_index
+    day_index = max(0, min(day_index, len(days)-1))
+    selected_day = days[day_index]
+
+    # Fetch 500 records for this day
+    cur.execute("""
+        SELECT id, latitude, longitude, altitude, timestamp AS ts_utc, day
+        FROM iss_positions
+        WHERE day = ?
+        ORDER BY timestamp ASC
+        LIMIT 500
+    """, (selected_day,))
+    records = [dict(r) for r in cur.fetchall()]
+    conn.close()
+    return jsonify({
+        "records": records,
+        "day": selected_day,
+        "day_index": day_index,
+        "total_days": len(days)
+    })
+
+# ---------- Serve HTML ----------
+@app.route("/")
+def index():
+    return send_from_directory(".", "index.html")
 
 # ---------- startup ----------
 if __name__ == "__main__":
@@ -182,13 +225,16 @@ if __name__ == "__main__":
         now = datetime.utcnow()
         conn = get_conn()
         cur = conn.cursor()
-        logger.info("Generating sample data (1000 records)...")
-        for i in range(1000):
-            tp = now - timedelta(seconds=i*60)  # 1 record per minute
-            cur.execute("""
-              INSERT INTO iss_positions (latitude, longitude, altitude, timestamp, day)
-              VALUES (?, ?, ?, ?, ?)
-            """, (45.0 + (i % 180) - 90, -180.0 + (i * 0.72) % 360, 408.0 + (i % 20) * 0.3, tp.strftime("%Y-%m-%d %H:%M:%S"), tp.strftime("%Y-%m-%d")))
+        logger.info("Generating sample data (3 days, 500 records/day)...")
+        for d in range(MAX_RETENTION_DAYS):
+            day_ts = now - timedelta(days=(MAX_RETENTION_DAYS - 1 - d))
+            for i in range(500):
+                tp = day_ts - timedelta(minutes=i)
+                cur.execute("""
+                  INSERT INTO iss_positions (latitude, longitude, altitude, timestamp, day)
+                  VALUES (?, ?, ?, ?, ?)
+                """, (45.0 + (i % 180) - 90, -180.0 + (i * 0.72) % 360, 408.0 + (i % 20) * 0.3,
+                      tp.strftime("%Y-%m-%d %H:%M:%S"), tp.strftime("%Y-%m-%d")))
         conn.commit()
         conn.close()
         logger.info("Sample data generated")
