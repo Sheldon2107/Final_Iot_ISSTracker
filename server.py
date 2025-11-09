@@ -9,13 +9,11 @@ from flask import Flask, jsonify, send_file, request, Response
 from flask_cors import CORS
 
 # ---------- Configuration ----------
-DB_PATH = os.environ.get("DB_PATH", "iss_data.db")
+DB_PATH = os.environ.get("DB_PATH", "iss_data.db")  # keep same path, ensure writable on Render
 API_URL = os.environ.get("ISS_API_URL", "https://api.wheretheiss.at/v1/satellites/25544")
-# Default fetch interval (seconds). WARNING: 1s => 86,400 records/day.
-# Set FETCH_INTERVAL_SEC=60 for 1 record/minute.
 FETCH_INTERVAL = int(os.environ.get("FETCH_INTERVAL_SEC", "1"))
 MAX_RETENTION_DAYS = int(os.environ.get("MAX_RETENTION_DAYS", "3"))
-SAMPLE_DATA = os.environ.get("SAMPLE_DATA", "0") == "1"  # set to "1" to generate sample data on first run
+SAMPLE_DATA = os.environ.get("SAMPLE_DATA", "0") == "1"
 PORT = int(os.environ.get("PORT", "10000"))
 
 # ---------- Logging ----------
@@ -28,7 +26,6 @@ CORS(app)
 
 # ---------- DB utilities ----------
 def get_conn():
-    # always use a short-lived connection per operation
     conn = sqlite3.connect(DB_PATH, detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES)
     conn.row_factory = sqlite3.Row
     return conn
@@ -118,20 +115,23 @@ def fetch_iss_position():
 
 # ---------- Background collection ----------
 stop_event = Event()
+
 def background_loop():
     cleanup_counter = 0
     while not stop_event.is_set():
         pos = fetch_iss_position()
         if pos:
             save_position(pos["latitude"], pos["longitude"], pos["altitude"], pos["ts_utc"])
-            count = get_record_count()
-            if count and count % 3600 == 0:
-                logger.info("Collected %d records (~%0.2f days)", count, count / 86400.0)
         cleanup_counter += 1
+        # Cleanup every hour
         if cleanup_counter >= max(1, int(3600 / max(1, FETCH_INTERVAL))):
             cleanup_old_data()
             cleanup_counter = 0
         stop_event.wait(FETCH_INTERVAL)
+
+# Start background thread outside __main__ so it works with Gunicorn
+t = Thread(target=background_loop, daemon=True)
+t.start()
 
 # ---------- API endpoints ----------
 @app.route("/")
@@ -194,11 +194,42 @@ def api_last3days():
     } for r in rows]
     return jsonify(data)
 
+@app.route("/api/download-csv")
+def download_csv():
+    day_filter = request.args.get("day", None)
+    all_days = request.args.get("all", "0") == "1"
+
+    def generate():
+        conn = get_conn()
+        cur = conn.cursor()
+        if day_filter and not all_days:
+            cur.execute("""
+              SELECT id, latitude, longitude, altitude, timestamp AS ts_utc, day 
+              FROM iss_positions 
+              WHERE day = ? 
+              ORDER BY timestamp ASC
+            """, (day_filter,))
+        else:
+            cur.execute("""
+              SELECT id, latitude, longitude, altitude, timestamp AS ts_utc, day 
+              FROM iss_positions 
+              ORDER BY timestamp ASC
+            """)
+        yield "id,latitude,longitude,altitude,ts_utc,day\n"
+        for row in cur:
+            yield f"{row['id']},{row['latitude']},{row['longitude']},{row['altitude']},{row['ts_utc']},{row['day']}\n"
+        conn.close()
+
+    filename = f"iss_data_{day_filter if day_filter else 'all'}.csv"
+    return Response(generate(), mimetype="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename={filename}"})
+
+# ---------- Stats and all-records ----------
 @app.route("/api/all-records")
 def api_all_records():
     try:
         page = max(1, int(request.args.get("page", 1)))
-        per_page = min(5000, max(1, int(request.args.get("per_page", 1000))))
+        per_page = 1000  # fixed 1000 records per day
         day_filter = request.args.get("day", None)
         conn = get_conn()
         cur = conn.cursor()
@@ -211,20 +242,19 @@ def api_all_records():
               SELECT id, latitude, longitude, altitude, timestamp AS ts_utc, day
               FROM iss_positions
               WHERE day = ?
-              ORDER BY timestamp DESC
+              ORDER BY timestamp ASC
               LIMIT ? OFFSET ?
             """, (day_filter, per_page, (page - 1) * per_page))
         else:
-            cur.execute("SELECT COUNT(*) FROM iss_positions")
-            total = cur.fetchone()[0]
-            cur.execute("SELECT DISTINCT day FROM iss_positions ORDER BY day DESC")
+            cur.execute("SELECT DISTINCT day FROM iss_positions ORDER BY day DESC LIMIT 3")
             days = [r["day"] for r in cur.fetchall()]
+            total = sum([1000]*len(days))  # approximate 1000 records per day
             cur.execute("""
               SELECT id, latitude, longitude, altitude, timestamp AS ts_utc, day
               FROM iss_positions
-              ORDER BY timestamp DESC
-              LIMIT ? OFFSET ?
-            """, (per_page, (page - 1) * per_page))
+              WHERE day IN ({seq})
+              ORDER BY day ASC, timestamp ASC
+            """.format(seq=','.join('?'*len(days))), tuple(days))
         rows = cur.fetchall()
         conn.close()
         records = [{
@@ -272,55 +302,7 @@ def api_stats():
         logger.exception("Error in /api/stats: %s", e)
         return jsonify({"error": "Unable to fetch stats"}), 500
 
-# ---------- CSV download endpoint ----------
-@app.route("/api/download-csv")
-def download_csv():
-    """
-    Download ISS position data as CSV
-    Query params:
-      - day: filter by specific day (YYYY-MM-DD)
-      - all: set to "1" to download all data
-    Examples:
-      /api/download-csv?all=1
-      /api/download-csv?day=2025-11-09
-    """
-    day_filter = request.args.get("day", None)
-    all_days = request.args.get("all", "0") == "1"
-
-    def generate():
-        conn = get_conn()
-        cur = conn.cursor()
-        if day_filter and not all_days:
-            cur.execute("""
-              SELECT id, latitude, longitude, altitude, timestamp AS ts_utc, day 
-              FROM iss_positions 
-              WHERE day = ? 
-              ORDER BY timestamp ASC
-            """, (day_filter,))
-        else:
-            cur.execute("""
-              SELECT id, latitude, longitude, altitude, timestamp AS ts_utc, day 
-              FROM iss_positions 
-              ORDER BY timestamp ASC
-            """)
-        
-        # CSV header
-        yield "id,latitude,longitude,altitude,ts_utc,day\n"
-        
-        # CSV rows
-        for row in cur:
-            yield f"{row['id']},{row['latitude']},{row['longitude']},{row['altitude']},{row['ts_utc']},{row['day']}\n"
-        
-        conn.close()
-
-    filename = f"iss_data_{day_filter if day_filter else 'all'}.csv"
-    return Response(
-        generate(), 
-        mimetype="text/csv", 
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
-    )
-
-# ---------- startup ----------
+# ---------- Startup ----------
 if __name__ == "__main__":
     logger.info("Starting ISS Tracker (DB=%s) FETCH_INTERVAL=%ss", DB_PATH, FETCH_INTERVAL)
     init_database()
@@ -329,17 +311,18 @@ if __name__ == "__main__":
         now = datetime.utcnow()
         conn = get_conn()
         cur = conn.cursor()
-        logger.info("Generating sample data (1000 records)...")
-        for i in range(1000):
-            tp = now - timedelta(seconds=i)
-            cur.execute("""
-              INSERT INTO iss_positions (latitude, longitude, altitude, timestamp, day)
-              VALUES (?, ?, ?, ?, ?)
-            """, (45.0 + (i % 180) - 90, -180.0 + (i * 0.72) % 360, 408.0 + (i % 20) * 0.3, tp.strftime("%Y-%m-%d %H:%M:%S"), tp.strftime("%Y-%m-%d")))
+        logger.info("Generating sample data (1000 records per day)...")
+        for day_offset in range(MAX_RETENTION_DAYS):
+            day_ts = now - timedelta(days=day_offset)
+            day_str = day_ts.strftime("%Y-%m-%d")
+            for i in range(1000):
+                tp = day_ts - timedelta(seconds=i)
+                cur.execute("""
+                  INSERT INTO iss_positions (latitude, longitude, altitude, timestamp, day)
+                  VALUES (?, ?, ?, ?, ?)
+                """, (45.0 + (i % 180) - 90, -180.0 + (i * 0.72) % 360, 408.0 + (i % 20) * 0.3, tp.strftime("%Y-%m-%d %H:%M:%S"), day_str))
         conn.commit()
         conn.close()
         logger.info("Sample data generated")
 
-    t = Thread(target=background_loop, daemon=True)
-    t.start()
     app.run(host="0.0.0.0", port=PORT, debug=False)
