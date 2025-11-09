@@ -103,7 +103,6 @@ header {background: rgba(10, 14, 39, 0.8);backdrop-filter: blur(20px);border-bot
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 <script>
-// --- JavaScript is unchanged ---
 let map = L.map('map',{zoomControl:true, attributionControl:false}).setView([0,0],2);
 L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {maxZoom:19}).addTo(map);
 
@@ -116,9 +115,17 @@ let currentIndex = 0;
 let playing = false;
 
 const issIcon = L.divIcon({html:`<div style="position:relative;width:30px;height:30px;"><div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:28px;">🛰️</div></div>`,className:'',iconSize:[30,30],iconAnchor:[15,15]});
+
 const userIcon = L.divIcon({html:`<div style="position:relative;width:24px;height:24px;"><div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:16px;height:16px;background:#10b981;border-radius:50%;border:3px solid white;box-shadow:0 0 15px rgba(16,185,129,0.8);"></div></div>`,className:'',iconSize:[24,24],iconAnchor:[12,12]});
 
-if(navigator.geolocation){navigator.geolocation.getCurrentPosition(pos=>{const lat=pos.coords.latitude;const lon=pos.coords.longitude;userMarker=L.marker([lat,lon],{icon:userIcon}).addTo(map);userMarker.bindPopup(`📍 Your Location<br>Lat: ${lat.toFixed(4)}°, Lon: ${lon.toFixed(4)}°`);});}
+if(navigator.geolocation){
+  navigator.geolocation.getCurrentPosition(pos=>{
+    const lat=pos.coords.latitude;
+    const lon=pos.coords.longitude;
+    userMarker=L.marker([lat,lon],{icon:userIcon}).addTo(map);
+    userMarker.bindPopup(`📍 Your Location<br>Lat: ${lat.toFixed(4)}°, Lon: ${lon.toFixed(4)}°`);
+  });
+}
 
 const chartOptions={responsive:true,maintainAspectRatio:true,plugins:{legend:{display:false},tooltip:{backgroundColor:'rgba(10,14,39,0.95)',titleColor:'#667eea',bodyColor:'#e8eaf6',borderColor:'rgba(102,126,234,0.3)',borderWidth:1,padding:12,displayColors:false}},scales:{x:{display:false},y:{grid:{color:'rgba(255,255,255,0.05)'},ticks:{color:'rgba(232,234,246,0.6)',font:{size:10}}}}};
 const latChart=new Chart(document.getElementById('latChart').getContext('2d'),{type:'line',data:{labels:[],datasets:[{label:'Latitude',data:[],borderColor:'#667eea',backgroundColor:'rgba(102,126,234,0.1)',fill:true,tension:0.4,borderWidth:2}]},options:chartOptions});
@@ -127,18 +134,74 @@ const altChart=new Chart(document.getElementById('altChart').getContext('2d'),{t
 
 const slider=document.getElementById('slider');const playBtn=document.getElementById('playPause');const liveMode=document.getElementById('liveMode');
 
-async function fetchData(){try{const res=await fetch('/api/last3days');dataPoints=await res.json();slider.max=dataPoints.length-1;if(currentIndex>=dataPoints.length)currentIndex=dataPoints.length-1;updateMap(currentIndex);updateCharts();}catch(err){console.error('Error fetching data:',err);}}setInterval(fetchData,2000);
+async function fetchData(){
+  try{
+    const res=await fetch('/api/last3days');
+    dataPoints=await res.json();
+    slider.max = dataPoints.length - 1;
+    if(currentIndex >= dataPoints.length) currentIndex = dataPoints.length - 1;
+    updateMap(currentIndex);
+    updateCharts();
+  } catch(err){
+    console.error('Error fetching data:',err);
+  }
+}
 
-function updateMap(index){if(dataPoints.length===0)return;poly.setLatLngs(dataPoints.map(p=>[p.latitude,p.longitude]));const d=dataPoints[index];if(!issMarker){issMarker=L.marker([d.latitude,d.longitude],{icon:issIcon}).addTo(map);}else{issMarker.setLatLng([d.latitude,d.longitude]);}issMarker.bindPopup(`<div class="popup-title">🛰️ ISS Position</div><div class="popup-row"><span class="popup-label">Time</span><span class="popup-value">${d.ts_utc}</span></div><div class="popup-row"><span class="popup-label">Latitude</span><span class="popup-value">${d.latitude.toFixed(4)}°</span></div><div class="popup-row"><span class="popup-label">Longitude</span><span class="popup-value">${d.longitude.toFixed(4)}°</span></div><div class="popup-row"><span class="popup-label">Altitude</span><span class="popup-value">${d.altitude.toFixed(2)} km</span></div>`);if(liveMode.checked)map.panTo([d.latitude,d.longitude],{animate:true,duration:0.5});}
+function updateMap(index){
+  if(dataPoints.length===0) return;
+  poly.setLatLngs(dataPoints.map(p=>[p.latitude,p.longitude]));
+  const d = dataPoints[index];
+  if(!issMarker){
+    issMarker=L.marker([d.latitude,d.longitude],{icon:issIcon}).addTo(map);
+  } else {
+    issMarker.setLatLng([d.latitude,d.longitude]);
+  }
+  issMarker.bindPopup(`
+    <div class="popup-title">🛰️ ISS Position</div>
+    <div class="popup-row"><span class="popup-label">Time</span><span class="popup-value">${d.ts_utc}</span></div>
+    <div class="popup-row"><span class="popup-label">Latitude</span><span class="popup-value">${d.latitude.toFixed(4)}°</span></div>
+    <div class="popup-row"><span class="popup-label">Longitude</span><span class="popup-value">${d.longitude.toFixed(4)}°</span></div>
+    <div class="popup-row"><span class="popup-label">Altitude</span><span class="popup-value">${d.altitude.toFixed(2)} km</span></div>
+  `);
+  if(liveMode.checked) map.panTo([d.latitude,d.longitude],{animate:true,duration:0.5});
+}
 
-function updateCharts(){const labels=dataPoints.map(d=>d.ts_utc);latChart.data.labels=labels;latChart.data.datasets[0].data=dataPoints.map(d=>d.latitude);latChart.update('none');lonChart.data.labels=labels;lonChart.data.datasets[0].data=dataPoints.map(d=>d.longitude);lonChart.update('none');altChart.data.labels=labels;altChart.data.datasets[0].data=dataPoints.map(d=>d.altitude);altChart.update('none');}
+function updateCharts(){
+  const labels = dataPoints.map(d=>d.ts_utc);
+  latChart.data.labels = labels;
+  latChart.data.datasets[0].data = dataPoints.map(d=>d.latitude);
+  latChart.update('none');
+  
+  lonChart.data.labels = labels;
+  lonChart.data.datasets[0].data = dataPoints.map(d=>d.longitude);
+  lonChart.update('none');
+  
+  altChart.data.labels = labels;
+  altChart.data.datasets[0].data = dataPoints.map(d=>d.altitude);
+  altChart.update('none');
+}
 
-slider.oninput=()=>{currentIndex=parseInt(slider.value);updateMap(currentIndex);};
-playBtn.onclick=()=>{playing=!playing;playBtn.innerHTML=playing?'⏸ Pause':'▶ Play';};
+slider.oninput = () => {
+  currentIndex = parseInt(slider.value);
+  updateMap(currentIndex);
+};
 
-setInterval(()=>{if(playing && dataPoints.length>0){currentIndex++;if(currentIndex>=dataPoints.length)currentIndex=0;slider.value=currentIndex;updateMap(currentIndex);}},500);
+playBtn.onclick = () => {
+  playing = !playing;
+  playBtn.innerHTML = playing ? '⏸ Pause' : '▶ Play';
+};
+
+setInterval(() => {
+  if(playing && dataPoints.length>0){
+    currentIndex++;
+    if(currentIndex >= dataPoints.length) currentIndex = 0;
+    slider.value = currentIndex;
+    updateMap(currentIndex);
+  }
+}, 500);
 
 fetchData();
+setInterval(fetchData, 5000); // refresh every 5 seconds
 </script>
 </body>
 </html>
