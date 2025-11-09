@@ -14,8 +14,8 @@ import io
 # ---------- Configuration ----------
 DB_PATH = os.environ.get("DB_PATH", "iss_data.db")
 API_URL = "https://api.wheretheiss.at/v1/satellites/25544"
-FETCH_INTERVAL = 60  # seconds
-MAX_DAYS = 3  # Keep only 3 days of data
+FETCH_INTERVAL = 60  # seconds, adjust for testing
+MAX_DAYS = 3         # keep only 3 days of data
 PORT = int(os.environ.get("PORT", 10000))
 
 # ---------- Logging ----------
@@ -71,22 +71,31 @@ def cleanup_old_days():
     conn.commit()
     conn.close()
 
-# ---------- ISS Fetching Thread ----------
+# ---------- Fetch ISS ----------
 stop_event = Event()
 
+def fetch_and_save():
+    r = requests.get(API_URL, timeout=10)
+    r.raise_for_status()
+    data = r.json()
+    lat = data.get("latitude")
+    lon = data.get("longitude")
+    alt = data.get("altitude")
+    ts_utc = datetime.utcfromtimestamp(data.get("timestamp")).strftime("%Y-%m-%d %H:%M:%S")
+    save_position(lat, lon, alt, ts_utc)
+    cleanup_old_days()
+    logger.info("Saved ISS data: %s,%s,%s at %s", lat, lon, alt, ts_utc)
+
 def fetch_iss_loop():
+    # first fetch immediately
+    try:
+        fetch_and_save()
+    except Exception as e:
+        logger.warning("Initial fetch failed: %s", e)
+    
     while not stop_event.is_set():
         try:
-            r = requests.get(API_URL, timeout=10)
-            r.raise_for_status()
-            data = r.json()
-            lat = data.get("latitude")
-            lon = data.get("longitude")
-            alt = data.get("altitude")  # in km
-            ts_utc = datetime.utcfromtimestamp(data.get("timestamp")).strftime("%Y-%m-%d %H:%M:%S")
-            save_position(lat, lon, alt, ts_utc)
-            cleanup_old_days()
-            logger.info("Saved ISS data: %s,%s,%s at %s", lat, lon, alt, ts_utc)
+            fetch_and_save()
         except Exception as e:
             logger.warning("Failed to fetch/save ISS data: %s", e)
         stop_event.wait(FETCH_INTERVAL)
@@ -117,15 +126,14 @@ def api_all_records():
     conn = get_conn()
     cur = conn.cursor()
 
-    # If day specified, only that day's data
     if day:
         cur.execute("SELECT * FROM iss_positions WHERE day=? ORDER BY id ASC LIMIT ?", (day, per_page))
     else:
         cur.execute("SELECT * FROM iss_positions ORDER BY id ASC LIMIT ?", (per_page,))
-    
+
     rows = [dict(r) for r in cur.fetchall()]
 
-    # Available days
+    # available days
     cur.execute("SELECT DISTINCT day FROM iss_positions ORDER BY day ASC")
     available_days = [r["day"] for r in cur.fetchall()]
 
