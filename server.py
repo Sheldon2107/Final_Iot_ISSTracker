@@ -8,7 +8,7 @@ app = Flask(__name__)
 
 DATA_FILE = 'iss_data.json'
 RECORDS_PER_DAY = 1000
-FETCH_INTERVAL = 86  # seconds (~1000 samples/day)
+FETCH_INTERVAL = 30  # seconds (~1000 samples/day)
 
 # Initialize data storage
 if os.path.exists(DATA_FILE):
