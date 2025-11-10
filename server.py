@@ -26,45 +26,52 @@ def safe_float(v):
     except Exception:
         return None
 
-# --- Background ISS data fetcher ---
 def fetch_iss_data():
+    # Track which simulated fetch we are on
+    if not hasattr(fetch_iss_data, "step"):
+        fetch_iss_data.step = 0
+
     while not stop_event.is_set():
         try:
             res = requests.get('https://api.wheretheiss.at/v1/satellites/25544', timeout=8)
             if res.status_code == 200:
                 d = res.json()
-                timestamp = int(d.get('timestamp', time.time()))
                 latitude = safe_float(d.get('latitude'))
                 longitude = safe_float(d.get('longitude'))
                 altitude = safe_float(d.get('altitude'))
                 velocity = safe_float(d.get('velocity'))
 
-                # --- SIMULATION for testing rollover ---
-                # Forces one fetch to appear just before midnight and the next fetch after midnight
-                now_myt = datetime.fromtimestamp(timestamp, tz=MYT)
-                simulate_rollover = True
-                if simulate_rollover:
-                    # If it's "current" fetch, force time to 11 Nov 23:59
-                    # Next fetch will automatically be after 00:00
-                    if not hasattr(fetch_iss_data, "simulated"):
-                        now_myt = now_myt.replace(day=11, hour=23, minute=57, second=0)
-                        timestamp = int(now_myt.timestamp())
-                        fetch_iss_data.simulated = True  # mark that we did this once
+                # --- SIMULATE rollover ---
+                now_myt = datetime.now(tz=MYT)
+                if fetch_iss_data.step == 0:
+                    # First fetch: 11 Nov 23:58
+                    simulated_time = now_myt.replace(month=11, day=11, hour=23, minute=58, second=0)
+                    fetch_iss_data.step += 1
+                elif fetch_iss_data.step == 1:
+                    # Second fetch: 12 Nov 00:00
+                    simulated_time = now_myt.replace(month=11, day=12, hour=0, minute=0, second=0)
+                    fetch_iss_data.step += 1
+                else:
+                    # Normal timestamps after testing
+                    simulated_time = datetime.fromtimestamp(int(d.get('timestamp', time.time())), tz=MYT)
 
-                ts_myt = datetime.fromtimestamp(timestamp, tz=MYT).strftime('%Y-%m-%d %H:%M:%S')
-                ts_myt_excel = "'" + ts_myt  # Excel-safe
+                timestamp = int(simulated_time.timestamp())
+
+                # Malaysian time string for CSV & Excel
+                ts_myt = simulated_time.strftime('%Y-%m-%d %H:%M:%S')
+                ts_myt_excel = "'" + ts_myt
 
                 # Append to CSV
                 with open(DATA_FILE, 'a', newline='') as f:
                     writer = csv.writer(f)
                     writer.writerow([timestamp, latitude, longitude, altitude, velocity, ts_myt_excel])
                 
-                print(f"✅ Fetched ISS data (simulated for rollover): {ts_myt}")
-
+                print(f"✅ Fetched ISS data (simulated): {ts_myt}")
         except Exception as e:
             print(f"❌ Error fetching ISS data: {e}")
 
         stop_event.wait(FETCH_INTERVAL)
+
 
 
 # Start background fetcher
