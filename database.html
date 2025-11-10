@@ -108,7 +108,7 @@ async function fetchAllData(){
     // extract unique days
     const daySet = new Set();
     records.forEach(r => {
-      const day = r.ts_utc.split(' ')[0];
+      const day = r.ts_myt.split(' ')[0];
       daySet.add(day);
       r.day = day;
     });
@@ -140,7 +140,7 @@ function renderTable(){
       <td class="coord-col">${r.latitude.toFixed(4)}</td>
       <td class="coord-col">${r.longitude.toFixed(4)}</td>
       <td class="alt-col">${r.altitude ? r.altitude.toFixed(2) : 'N/A'}</td>
-      <td class="time-col">${r.ts_utc}</td>
+      <td class="time-col">${r.ts_myt}</td>
     </tr>
   `).join('');
 
