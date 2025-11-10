@@ -39,16 +39,21 @@ def fetch_iss_data():
                 altitude = safe_float(d.get('altitude'))
                 velocity = safe_float(d.get('velocity'))
 
+                # --- SIMULATION: Add 1 day for testing ---
+                simulate_next_day = True
+                if simulate_next_day:
+                    timestamp += 24 * 3600  # Add 1 day (in seconds)
+
                 # Malaysian time string for CSV & Excel
                 ts_myt = datetime.fromtimestamp(timestamp, tz=MYT).strftime('%Y-%m-%d %H:%M:%S')
-                ts_myt_excel = "'" + ts_myt  # prepend quote to avoid Excel scientific notation
+                ts_myt_excel = "'" + ts_myt
 
                 # Append to CSV
                 with open(DATA_FILE, 'a', newline='') as f:
                     writer = csv.writer(f)
                     writer.writerow([timestamp, latitude, longitude, altitude, velocity, ts_myt_excel])
                 
-                print(f"✅ Fetched ISS data: {ts_myt}")
+                print(f"✅ Fetched ISS data (simulated next day): {ts_myt}")
         except Exception as e:
             print(f"❌ Error fetching ISS data: {e}")
 
