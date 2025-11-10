@@ -38,12 +38,14 @@ def fetch_iss_data():
                 altitude = safe_float(d.get('altitude'))
                 velocity = safe_float(d.get('velocity'))
 
-                # Malaysian time string
+                # --- UPDATED: Malaysian time in ISO format for CSV ---
                 ts_myt = datetime.fromtimestamp(timestamp, tz=MYT).strftime('%Y-%m-%d %H:%M:%S')
+                # Optional: prepend single quote for Excel-safe text
+                ts_myt_excel = "'" + ts_myt
 
                 with open(DATA_FILE, 'a', newline='') as f:
                     writer = csv.writer(f)
-                    writer.writerow([timestamp, latitude, longitude, altitude, velocity, ts_myt])
+                    writer.writerow([timestamp, latitude, longitude, altitude, velocity, ts_myt_excel])
         except Exception as e:
             print("Error fetching ISS data:", e)
         stop_event.wait(FETCH_INTERVAL)
