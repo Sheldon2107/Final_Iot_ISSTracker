@@ -359,9 +359,10 @@ async function fetchAllData() {
     // Extract unique days
     const daySet = new Set();
     records.forEach(r => {
-      const day = r.ts_myt.split(' ')[0];
-      daySet.add(day);
-      r.day = day;
+    // Remove leading/trailing quotes, then get date
+    const day = r.ts_myt.replace(/^'+|'+$/g, '').split(' ')[0];
+    daySet.add(day);
+    r.day = day;
     });
     days = Array.from(daySet).sort();
 
