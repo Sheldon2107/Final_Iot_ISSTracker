@@ -9,7 +9,7 @@ import time
 
 app = Flask(__name__)
 DATA_FILE = 'iss_data.csv'
-FETCH_INTERVAL = 1  # seconds
+FETCH_INTERVAL = 60  # seconds
 stop_event = Event()
 
 # Ensure CSV file exists with header (timestamp = unix seconds + ts_utc string)
