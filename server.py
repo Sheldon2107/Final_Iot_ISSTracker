@@ -1,10 +1,10 @@
-# server.py — ISS Tracker (Real Data)
+# server.py — ISS Tracker with Malaysian time (UTC+8) + continuous day rollover
 from flask import Flask, jsonify, send_from_directory, request
 import requests
 import csv
 import os
 from threading import Thread, Event
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 import time
 
 app = Flask(__name__)
@@ -13,51 +13,72 @@ FETCH_INTERVAL = 60  # seconds
 stop_event = Event()
 MYT = timezone(timedelta(hours=8))  # Malaysia Time UTC+8
 
-# --- Ensure CSV exists with header ---
+# --- Ensure CSV file exists with header ---
 if not os.path.exists(DATA_FILE):
     with open(DATA_FILE, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(['timestamp','latitude','longitude','altitude','velocity','ts_myt'])
 
-# --- Helper ---
+# --- Helper function ---
 def safe_float(v):
     try:
         return float(v)
     except:
         return None
 
-# --- Fetch ISS Data ---
+# --- Background ISS data fetcher with day rollover handling ---
 def fetch_iss_data():
     while not stop_event.is_set():
         try:
             res = requests.get('https://api.wheretheiss.at/v1/satellites/25544', timeout=8)
             if res.status_code == 200:
                 d = res.json()
+                # Real timestamp
                 timestamp = int(d.get('timestamp', time.time()))
                 latitude = safe_float(d.get('latitude'))
                 longitude = safe_float(d.get('longitude'))
                 altitude = safe_float(d.get('altitude'))
                 velocity = safe_float(d.get('velocity'))
 
-                # Malaysian time string for CSV & Excel
-                ts_myt = datetime.fromtimestamp(timestamp, tz=MYT).strftime('%Y-%m-%d %H:%M:%S')
-                ts_myt_excel = "'" + ts_myt
+                # Convert to MYT
+                dt_myt = datetime.fromtimestamp(timestamp, tz=MYT)
+                ts_myt_excel = "'" + dt_myt.strftime('%Y-%m-%d %H:%M:%S')
+
+                # --- Day rollover check ---
+                # If last row in CSV exists, ensure timestamps are strictly increasing
+                last_timestamp = 0
+                if os.path.exists(DATA_FILE):
+                    with open(DATA_FILE, 'r') as f:
+                        lines = f.readlines()
+                        if len(lines) > 1:
+                            last_line = lines[-1].strip().split(',')
+                            try:
+                                last_timestamp = int(last_line[0])
+                            except:
+                                pass
+
+                # Ensure we never go backward in time
+                if timestamp <= last_timestamp:
+                    timestamp = last_timestamp + 1
+                    dt_myt = datetime.fromtimestamp(timestamp, tz=MYT)
+                    ts_myt_excel = "'" + dt_myt.strftime('%Y-%m-%d %H:%M:%S')
 
                 # Append to CSV
                 with open(DATA_FILE, 'a', newline='') as f:
                     writer = csv.writer(f)
                     writer.writerow([timestamp, latitude, longitude, altitude, velocity, ts_myt_excel])
-                
-                print(f"✅ Fetched ISS data: {ts_myt}")
+
+                print(f"✅ Fetched ISS data: {ts_myt_excel}")
+
         except Exception as e:
             print(f"❌ Error fetching ISS data: {e}")
 
         stop_event.wait(FETCH_INTERVAL)
 
-# --- Start background fetcher ---
+# Start background fetcher
 Thread(target=fetch_iss_data, daemon=True).start()
 
-# --- API for database preview ---
+# --- API definitions ---
 @app.route('/api/preview')
 def api_preview():
     day_index = int(request.args.get('day_index', 0))
@@ -96,7 +117,6 @@ def api_preview():
     except Exception as e:
         return jsonify({'records': [], 'error': str(e)})
 
-# --- API: All records ---
 @app.route('/api/all-records')
 def api_all_records():
     if not os.path.exists(DATA_FILE):
@@ -145,7 +165,6 @@ def api_all_records():
         "available_days": days
     })
 
-# --- API: Dashboard recent ---
 @app.route('/api/dashboard')
 def api_dashboard():
     records = []
@@ -196,7 +215,7 @@ def serve_static(path):
 # --- Start server ---
 if __name__ == '__main__':
     try:
-        print("🚀 Starting ISS Tracker Server...")
+        print("🚀 Starting ISS Tracker Server with Day Rollover...")
         print(f"📍 Data file: {DATA_FILE}")
         print(f"⏱ Fetch interval: {FETCH_INTERVAL}s")
         print(f"🌏 Timezone: MYT (UTC+8)")
