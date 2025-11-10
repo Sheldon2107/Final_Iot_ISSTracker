@@ -1,15 +1,15 @@
-# server.py — ISS Tracker with Malaysian time (UTC+8)
+# server.py — ISS Tracker Testing (Simulated Continuous Time)
 from flask import Flask, jsonify, send_from_directory, request
-import requests
 import csv
 import os
 from threading import Thread, Event
 from datetime import datetime, timedelta, timezone
 import time
+import random
 
 app = Flask(__name__)
 DATA_FILE = 'iss_data.csv'
-FETCH_INTERVAL = 60  # seconds
+FETCH_INTERVAL = 10  # seconds for faster testing
 stop_event = Event()
 MYT = timezone(timedelta(hours=8))  # Malaysia Time UTC+8
 
@@ -26,53 +26,35 @@ def safe_float(v):
     except Exception:
         return None
 
+# --- Simulated ISS Data Fetcher ---
 def fetch_iss_data():
-    # Track which simulated fetch we are on
-    if not hasattr(fetch_iss_data, "step"):
-        fetch_iss_data.step = 0
+    # Start at 11 Nov 23:58
+    simulated_base = datetime(2025, 11, 11, 23, 58, 0, tzinfo=MYT)
+    step = 0
 
     while not stop_event.is_set():
-        try:
-            res = requests.get('https://api.wheretheiss.at/v1/satellites/25544', timeout=8)
-            if res.status_code == 200:
-                d = res.json()
-                latitude = safe_float(d.get('latitude'))
-                longitude = safe_float(d.get('longitude'))
-                altitude = safe_float(d.get('altitude'))
-                velocity = safe_float(d.get('velocity'))
+        # Increment 2 minutes per step for testing
+        simulated_time = simulated_base + timedelta(minutes=step*2)
+        timestamp = int(simulated_time.timestamp())
 
-                # --- SIMULATE rollover ---
-                now_myt = datetime.now(tz=MYT)
-                if fetch_iss_data.step == 0:
-                    # First fetch: 11 Nov 23:58
-                    simulated_time = now_myt.replace(month=11, day=11, hour=23, minute=58, second=0)
-                    fetch_iss_data.step += 1
-                elif fetch_iss_data.step == 1:
-                    # Second fetch: 12 Nov 00:00
-                    simulated_time = now_myt.replace(month=11, day=12, hour=0, minute=0, second=0)
-                    fetch_iss_data.step += 1
-                else:
-                    # Normal timestamps after testing
-                    simulated_time = datetime.fromtimestamp(int(d.get('timestamp', time.time())), tz=MYT)
+        # Randomly generate coordinates, altitude, velocity for testing
+        latitude = round(random.uniform(-90, 90), 4)
+        longitude = round(random.uniform(-180, 180), 4)
+        altitude = round(random.uniform(400, 420), 2)  # km
+        velocity = round(random.uniform(7.5, 7.8), 2)  # km/s
 
-                timestamp = int(simulated_time.timestamp())
+        ts_myt = simulated_time.strftime('%Y-%m-%d %H:%M:%S')
+        ts_myt_excel = "'" + ts_myt
 
-                # Malaysian time string for CSV & Excel
-                ts_myt = simulated_time.strftime('%Y-%m-%d %H:%M:%S')
-                ts_myt_excel = "'" + ts_myt
+        # Append to CSV
+        with open(DATA_FILE, 'a', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow([timestamp, latitude, longitude, altitude, velocity, ts_myt_excel])
+        
+        print(f"✅ Fetched simulated ISS data: {ts_myt}")
 
-                # Append to CSV
-                with open(DATA_FILE, 'a', newline='') as f:
-                    writer = csv.writer(f)
-                    writer.writerow([timestamp, latitude, longitude, altitude, velocity, ts_myt_excel])
-                
-                print(f"✅ Fetched ISS data (simulated): {ts_myt}")
-        except Exception as e:
-            print(f"❌ Error fetching ISS data: {e}")
-
+        step += 1
         stop_event.wait(FETCH_INTERVAL)
-
-
 
 # Start background fetcher
 Thread(target=fetch_iss_data, daemon=True).start()
@@ -113,10 +95,8 @@ def api_preview():
                 except Exception:
                     continue
 
-        print(f"📊 Returning {len(records)} records for preview")
         return jsonify({'records': records})
     except Exception as e:
-        print(f"❌ Error reading CSV: {e}")
         return jsonify({'records': [], 'error': str(e)})
 
 # --- API: All records with pagination ---
@@ -195,7 +175,6 @@ def api_dashboard():
                     continue
         return jsonify({'records': records})
     except Exception as e:
-        print(f"❌ Error reading CSV: {e}")
         return jsonify({'records': [], 'error': str(e)})
 
 # --- Serve frontend files ---
@@ -220,7 +199,7 @@ def serve_static(path):
 # --- Start server ---
 if __name__ == '__main__':
     try:
-        print("🚀 Starting ISS Tracker Server...")
+        print("🚀 Starting ISS Tracker Testing Server...")
         print(f"📍 Data file: {DATA_FILE}")
         print(f"⏱ Fetch interval: {FETCH_INTERVAL}s")
         print(f"🌏 Timezone: MYT (UTC+8)")
