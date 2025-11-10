@@ -1,108 +1,186 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>ISS Database Viewer</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Inter', sans-serif; background:#1a1a2e; color:#e5e7eb; min-height:100vh; }
+header { display:flex; justify-content:space-between; align-items:center; padding:24px 48px; background:rgba(25,29,56,0.85); backdrop-filter:blur(20px); border-bottom:1px solid rgba(255,255,255,0.06); position:sticky; top:0; z-index:1000; }
+.logo { display:flex; align-items:center; gap:16px; }
+.logo-icon { width:48px; height:48px; background:linear-gradient(135deg,#6366f1,#a855f7); border-radius:12px; display:flex; align-items:center; justify-content:center; font-size:24px; }
+.logo-text h1 { font-size:24px; font-weight:700; background:linear-gradient(135deg,#6366f1,#a855f7); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+.logo-text p { font-size:13px; color:rgba(229,231,235,0.6); margin-top:2px; }
+.back-button { background:linear-gradient(135deg,#6366f1,#8b5cf6); border:none; color:white; padding:12px 24px; border-radius:12px; font-weight:600; cursor:pointer; text-decoration:none; display:flex; align-items:center; gap:8px; }
+.container { max-width:1400px; margin:48px auto; padding:0 48px; }
+.stats-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:24px; margin-bottom:32px; }
+.stat-card { background:rgba(25,29,56,0.65); backdrop-filter:blur(20px); border:1px solid rgba(255,255,255,0.08); padding:28px; border-radius:16px; }
+.stat-label { font-size:13px; font-weight:600; text-transform:uppercase; color:rgba(229,231,235,0.6); margin-bottom:8px; }
+.stat-value { font-size:32px; font-weight:700; background:linear-gradient(135deg,#6366f1,#a855f7); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+.day-navigator { display:flex; justify-content:center; align-items:center; gap:24px; background:rgba(25,29,56,0.65); backdrop-filter:blur(20px); border:1px solid rgba(255,255,255,0.08); border-radius:16px; padding:20px 32px; margin-bottom:32px; }
+.nav-button { background:linear-gradient(135deg,#6366f1,#8b5cf6); border:none; color:white; padding:12px 24px; border-radius:10px; font-weight:600; cursor:pointer; }
+.nav-button:disabled { opacity:0.3; cursor:not-allowed; }
+.current-day { font-size:18px; font-weight:700; color:#6366f1; min-width:180px; text-align:center; letter-spacing:-0.3px; }
+.table-container { background:rgba(25,29,56,0.65); backdrop-filter:blur(20px); border:1px solid rgba(255,255,255,0.08); border-radius:16px; overflow:hidden; }
+table { width:100%; border-collapse:collapse; }
+thead { background:rgba(99,102,241,0.1); border-bottom:2px solid rgba(99,102,241,0.3); }
+th, td { padding:18px 24px; font-size:14px; color:rgba(229,231,235,0.9); text-align:left; }
+.id-col { color:#6366f1; font-weight:700; font-size:13px; }
+.coord-col { font-family:'Monaco',monospace; color:#fbbf24; font-weight:500; }
+.alt-col { color:#10b981; font-weight:700; }
+.time-col { color:rgba(229,231,235,0.6); font-size:13px; font-family:'Monaco',monospace; }
+.loading, .no-data { text-align:center; padding:64px 32px; color:rgba(229,231,235,0.5); font-size:15px; }
+.download-button { background:linear-gradient(135deg,#10b981,#059669); border:none; color:white; padding:18px 36px; border-radius:12px; font-weight:700; cursor:pointer; font-size:16px; margin-top:32px; display:inline-flex; align-items:center; gap:12px; }
+.download-button:hover { transform:translateY(-2px); }
+</style>
+</head>
+<body>
+<header>
+<div class="logo">
+<div class="logo-icon">🛰️</div>
+<div class="logo-text">
+<h1>Database Viewer</h1>
+<p>ISS Position Records Archive</p>
+</div>
+</div>
+<a href="/" class="back-button">← Back to Dashboard</a>
+</header>
+
+<div class="container">
+<div class="stats-grid">
+<div class="stat-card">
+<div class="stat-label">Total Records</div>
+<div class="stat-value" id="totalRecords">0</div>
+</div>
+<div class="stat-card">
+<div class="stat-label">Total Days</div>
+<div class="stat-value" id="totalDays">0</div>
+</div>
+</div>
+
+<div class="day-navigator">
+<button class="nav-button" id="prevDay" onclick="changeDay(-1)">← Previous</button>
+<div class="current-day" id="currentDay">Loading...</div>
+<button class="nav-button" id="nextDay" onclick="changeDay(1)">Next →</button>
+</div>
+
+<div class="table-container">
+<table>
+<thead>
+<tr>
+<th>ID</th>
+<th>Latitude (°)</th>
+<th>Longitude (°)</th>
+<th>Altitude (km)</th>
+<th>Timestamp (MYT)</th>
+</tr>
+</thead>
+<tbody id="tableBody">
+<tr><td colspan="5" class="loading">Loading data...</td></tr>
+</tbody>
+</table>
+</div>
+
+<button class="download-button" onclick="downloadCSV()">📥 Download All Data (CSV)</button>
+</div>
+
 <script>
 let records = [];
 let currentDayIndex = 0;
 let days = [];
-let userManuallyChangedDay = false; // Track if user manually navigated
+let userManuallyChangedDay = false;
 
-// Fetch all records from server
-async function fetchAllData() {
-    try {
-        const res = await fetch('/api/all-records?per_page=5000'); // get all records
+async function fetchAllData(){
+    try{
+        const res = await fetch('/api/preview');
         const data = await res.json();
         const newRecords = data.records || [];
 
-        if (newRecords.length === 0) {
+        if(newRecords.length === 0){
             document.getElementById('tableBody').innerHTML = '<tr><td colspan="5" class="no-data">No data available</td></tr>';
             document.getElementById('currentDay').innerText = '—';
             document.getElementById('totalRecords').innerText = '0';
             document.getElementById('totalDays').innerText = '0';
-            records = [];
-            days = [];
+            records = []; days = [];
             return;
         }
 
-        // Keep old latest day
-        const oldLatestDay = days.length > 0 ? days[days.length - 1] : null;
+        const oldLatestDay = days.length > 0 ? days[days.length-1] : null;
 
         records = newRecords;
 
-        // Extract unique days from all records
+        // extract unique days
         const daySet = new Set();
-        records.forEach(r => {
-            const day = r.ts_myt.replace(/^'+|'+$/g, '').split(' ')[0];
+        records.forEach(r=>{
+            const day = r.ts_myt.replace(/^'+|'+$/g,'').split(' ')[0];
             daySet.add(day);
             r.day = day;
         });
         days = Array.from(daySet).sort();
 
-        // Auto-switch to latest day if new day appears and user hasn't manually navigated
-        const latestDay = days[days.length - 1];
-        if (latestDay !== oldLatestDay && !userManuallyChangedDay) {
-            currentDayIndex = days.length - 1;
+        const latestDay = days[days.length-1];
+        if(latestDay !== oldLatestDay && !userManuallyChangedDay){
+            currentDayIndex = days.length-1;
         }
 
-        // Reset manual flag if already on latest day
-        if (currentDayIndex === days.length - 1) {
-            userManuallyChangedDay = false;
-        }
+        if(currentDayIndex === days.length-1) userManuallyChangedDay = false;
 
         updateSummary();
         renderTable();
-    } catch(err) {
-        console.error('Failed to fetch data:', err);
+    }catch(err){
+        console.error('Failed to fetch data', err);
         document.getElementById('tableBody').innerHTML = '<tr><td colspan="5" class="no-data">Failed to load data</td></tr>';
     }
 }
 
-function updateSummary() {
+function updateSummary(){
     document.getElementById('totalRecords').innerText = records.length.toLocaleString();
-    const uniqueDays = [...new Set(records.map(r => r.day))];
+    const uniqueDays = [...new Set(records.map(r=>r.ts_myt.replace(/^'+|'+$/g,'').split(' ')[0]))];
     document.getElementById('totalDays').innerText = uniqueDays.length;
 }
 
-function renderTable() {
-    if(days.length === 0) return;
-
+function renderTable(){
+    if(days.length===0) return;
     const day = days[currentDayIndex];
     document.getElementById('currentDay').innerText = day;
-
-    const dayRecords = records.filter(r => r.day === day);
+    const dayRecords = records.filter(r=>r.day===day);
     const tbody = document.getElementById('tableBody');
 
-    if(dayRecords.length === 0){
+    if(dayRecords.length===0){
         tbody.innerHTML = '<tr><td colspan="5" class="no-data">No records for this day</td></tr>';
         return;
     }
 
-    tbody.innerHTML = dayRecords.map((r, i) => `
-<tr>
-<td class="id-col">#${i+1}</td>
-<td class="coord-col">${r.latitude.toFixed(4)}</td>
-<td class="coord-col">${r.longitude.toFixed(4)}</td>
-<td class="alt-col">${r.altitude ? r.altitude.toFixed(2) : 'N/A'}</td>
-<td class="time-col">${r.ts_myt.replace(/^'+|'+$/g, '')}</td>
-</tr>
-`).join('');
+    tbody.innerHTML = dayRecords.map((r,i)=>`
+        <tr>
+        <td class="id-col">#${i+1}</td>
+        <td class="coord-col">${r.latitude.toFixed(4)}</td>
+        <td class="coord-col">${r.longitude.toFixed(4)}</td>
+        <td class="alt-col">${r.altitude ? r.altitude.toFixed(2) : 'N/A'}</td>
+        <td class="time-col">${r.ts_myt.replace(/^'+|'+$/g,'')}</td>
+        </tr>
+    `).join('');
 
-    document.getElementById('prevDay').disabled = currentDayIndex === 0;
-    document.getElementById('nextDay').disabled = currentDayIndex === days.length - 1;
+    document.getElementById('prevDay').disabled = currentDayIndex===0;
+    document.getElementById('nextDay').disabled = currentDayIndex===days.length-1;
 }
 
 function changeDay(direction){
     userManuallyChangedDay = true;
     currentDayIndex += direction;
-    if(currentDayIndex < 0) currentDayIndex = 0;
-    if(currentDayIndex >= days.length) currentDayIndex = days.length - 1;
+    if(currentDayIndex<0) currentDayIndex=0;
+    if(currentDayIndex>=days.length) currentDayIndex=days.length-1;
     renderTable();
 }
 
 function downloadCSV(){
-    window.location.href = '/api/download';
+    window.location.href='/api/download';
 }
 
-// Initial fetch
 fetchAllData();
-
-// Auto-refresh every 15 seconds for testing
-setInterval(fetchAllData, 15000);
+setInterval(fetchAllData,15000); // refresh every 15 seconds
 </script>
+</body>
+</html>
