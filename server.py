@@ -1,4 +1,4 @@
-# server.py — ISS collector with Malaysian time (UTC+8)
+# server.py — ISS Tracker with Malaysian time (UTC+8)
 from flask import Flask, jsonify, send_from_directory, request
 import requests
 import csv
@@ -11,21 +11,22 @@ app = Flask(__name__)
 DATA_FILE = 'iss_data.csv'
 FETCH_INTERVAL = 60  # seconds
 stop_event = Event()
-
 MYT = timezone(timedelta(hours=8))  # Malaysia Time UTC+8
 
-# Ensure CSV file exists with header
+# --- Ensure CSV file exists with header ---
 if not os.path.exists(DATA_FILE):
     with open(DATA_FILE, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(['timestamp','latitude','longitude','altitude','velocity','ts_myt'])
 
+# --- Helper function ---
 def safe_float(v):
     try:
         return float(v)
     except Exception:
         return None
 
+# --- Background ISS data fetcher ---
 def fetch_iss_data():
     while not stop_event.is_set():
         try:
@@ -38,89 +39,74 @@ def fetch_iss_data():
                 altitude = safe_float(d.get('altitude'))
                 velocity = safe_float(d.get('velocity'))
 
-                # Malaysian time in ISO format
+                # Malaysian time string for CSV & Excel
                 ts_myt = datetime.fromtimestamp(timestamp, tz=MYT).strftime('%Y-%m-%d %H:%M:%S')
+                ts_myt_excel = "'" + ts_myt  # prepend quote to avoid Excel scientific notation
 
+                # Append to CSV
                 with open(DATA_FILE, 'a', newline='') as f:
                     writer = csv.writer(f)
-                    writer.writerow([timestamp, latitude, longitude, altitude, velocity, ts_myt])
+                    writer.writerow([timestamp, latitude, longitude, altitude, velocity, ts_myt_excel])
+                
+                print(f"✅ Fetched ISS data: {ts_myt}")
         except Exception as e:
-            print("Error fetching ISS data:", e)
+            print(f"❌ Error fetching ISS data: {e}")
+
         stop_event.wait(FETCH_INTERVAL)
 
-# Start background fetching thread
-t = Thread(target=fetch_iss_data, daemon=True)
-t.start()
+# Start background fetcher
+Thread(target=fetch_iss_data, daemon=True).start()
 
-# ----------------- API -----------------
-
+# --- API: Preview records (optional day_index filter) ---
 @app.route('/api/preview')
 def api_preview():
-    """Return all records for a given calendar day (MYT)"""
-    try:
-        day_index = int(request.args.get('day_index', 0))
-    except Exception:
-        day_index = 0
-
+    day_index = int(request.args.get('day_index', 0))
     records = []
+
     if not os.path.exists(DATA_FILE):
         return jsonify({'records': []})
 
-    with open(DATA_FILE, 'r') as f:
-        reader = csv.DictReader(f)
-        all_rows = list(reader)
-        if not all_rows:
-            return jsonify({'records': []})
+    try:
+        with open(DATA_FILE, 'r') as f:
+            reader = csv.DictReader(f)
+            all_rows = list(reader)
+            if not all_rows:
+                return jsonify({'records': []})
 
-        # Extract unique days from timestamps
-        day_set = set()
-        for row in all_rows:
-            try:
-                ts = int(row['timestamp'])
-            except Exception:
-                continue
-            dt = datetime.fromtimestamp(ts, tz=MYT)
-            day_set.add(dt.strftime('%Y-%m-%d'))
+            first_ts = int(all_rows[0]['timestamp'])
+            start_of_day = datetime.fromtimestamp(first_ts, tz=MYT).replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=day_index)
+            end_of_day = start_of_day + timedelta(days=1)
 
-        available_days = sorted(list(day_set))
-        if day_index >= len(available_days):
-            day_index = len(available_days) - 1
-        if day_index < 0:
-            day_index = 0
-        target_day = available_days[day_index]
+            for row in all_rows:
+                try:
+                    ts = int(row['timestamp'])
+                    dt = datetime.fromtimestamp(ts, tz=MYT)
+                    if start_of_day <= dt < end_of_day:
+                        records.append({
+                            'timestamp': ts,
+                            'ts_myt': row.get('ts_myt', dt.strftime('%Y-%m-%d %H:%M:%S')),
+                            'latitude': safe_float(row.get('latitude')),
+                            'longitude': safe_float(row.get('longitude')),
+                            'altitude': safe_float(row.get('altitude')),
+                            'velocity': safe_float(row.get('velocity'))
+                        })
+                except Exception:
+                    continue
 
-        for row in all_rows:
-            try:
-                ts = int(row['timestamp'])
-            except Exception:
-                continue
-            dt = datetime.fromtimestamp(ts, tz=MYT)
-            row_day = dt.strftime('%Y-%m-%d')
-            if row_day == target_day:
-                records.append({
-                    'timestamp': ts,
-                    'ts_myt': row.get('ts_myt', dt.strftime('%Y-%m-%d %H:%M:%S')),
-                    'latitude': safe_float(row.get('latitude')),
-                    'longitude': safe_float(row.get('longitude')),
-                    'altitude': safe_float(row.get('altitude')),
-                    'velocity': safe_float(row.get('velocity'))
-                })
+        print(f"📊 Returning {len(records)} records for preview")
+        return jsonify({'records': records})
+    except Exception as e:
+        print(f"❌ Error reading CSV: {e}")
+        return jsonify({'records': [], 'error': str(e)})
 
-    return jsonify({'records': records, 'available_days': available_days})
-
+# --- API: All records with pagination ---
 @app.route('/api/all-records')
 def api_all_records():
     if not os.path.exists(DATA_FILE):
-        return jsonify({"records": [], "total": 0, "page":1, "per_page":1, "total_pages":1, "available_days": []})
+        return jsonify({"records": [], "total": 0, "page": 1, "per_page": 1, "total_pages": 1, "available_days": []})
 
-    try:
-        page = max(1, int(request.args.get('page', 1)))
-    except Exception:
-        page = 1
-    try:
-        per_page = min(5000, max(1, int(request.args.get('per_page', 1000))))
-    except Exception:
-        per_page = 1000
+    page = max(1, int(request.args.get('page', 1)))
+    per_page = min(5000, max(1, int(request.args.get('per_page', 1000))))
     day_filter = request.args.get('day', None)
 
     rows = []
@@ -134,7 +120,7 @@ def api_all_records():
             dt = datetime.fromtimestamp(ts, tz=MYT)
             day = dt.strftime('%Y-%m-%d')
             rows.append({
-                "id": i+1,
+                "id": i + 1,
                 "timestamp_unix": ts,
                 "ts_myt": r.get('ts_myt', dt.strftime('%Y-%m-%d %H:%M:%S')),
                 "latitude": safe_float(r.get('latitude')),
@@ -146,12 +132,11 @@ def api_all_records():
 
     rows_sorted = sorted(rows, key=lambda x: x['timestamp_unix'], reverse=True)
     days = sorted(list({r['day'] for r in rows}), reverse=True)
-    filtered = [r for r in rows_sorted if (day_filter is None or r['day'] == day_filter)]
+    filtered = [r for r in rows_sorted if day_filter is None or r['day'] == day_filter]
 
     total = len(filtered)
     total_pages = (total + per_page - 1) // per_page if total else 1
-    start = (page - 1) * per_page
-    end = start + per_page
+    start, end = (page - 1) * per_page, (page - 1) * per_page + per_page
     page_records = filtered[start:end]
 
     return jsonify({
@@ -163,7 +148,37 @@ def api_all_records():
         "available_days": days
     })
 
-# ----------------- Frontend -----------------
+# --- API: Recent records for dashboard ---
+@app.route('/api/dashboard')
+def api_dashboard():
+    records = []
+    if not os.path.exists(DATA_FILE):
+        return jsonify({'records': []})
+    try:
+        with open(DATA_FILE, 'r') as f:
+            reader = csv.DictReader(f)
+            all_rows = list(reader)
+            recent_rows = all_rows[-500:] if len(all_rows) > 500 else all_rows
+            for row in recent_rows:
+                try:
+                    ts = int(row['timestamp'])
+                    dt = datetime.fromtimestamp(ts, tz=MYT)
+                    records.append({
+                        'timestamp': ts,
+                        'ts_myt': row.get('ts_myt', dt.strftime('%Y-%m-%d %H:%M:%S')),
+                        'latitude': safe_float(row.get('latitude')),
+                        'longitude': safe_float(row.get('longitude')),
+                        'altitude': safe_float(row.get('altitude')),
+                        'velocity': safe_float(row.get('velocity'))
+                    })
+                except Exception:
+                    continue
+        return jsonify({'records': records})
+    except Exception as e:
+        print(f"❌ Error reading CSV: {e}")
+        return jsonify({'records': [], 'error': str(e)})
+
+# --- Serve frontend files ---
 @app.route('/')
 def serve_index():
     return send_from_directory('.', 'index.html')
@@ -182,8 +197,13 @@ def download_csv():
 def serve_static(path):
     return send_from_directory('.', path)
 
+# --- Start server ---
 if __name__ == '__main__':
     try:
+        print("🚀 Starting ISS Tracker Server...")
+        print(f"📍 Data file: {DATA_FILE}")
+        print(f"⏱ Fetch interval: {FETCH_INTERVAL}s")
+        print(f"🌏 Timezone: MYT (UTC+8)")
         app.run(debug=True, host='0.0.0.0', port=5000)
     finally:
         stop_event.set()
