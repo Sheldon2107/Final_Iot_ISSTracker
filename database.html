@@ -4,84 +4,108 @@
 <meta charset="utf-8">
 <title>ISS Database Viewer</title>
 <style>
-body{font-family:sans-serif;background:#0a0e27;color:#e8eaf6;margin:0;padding:0;}
-header{padding:20px;background:rgba(10,14,39,0.9);display:flex;justify-content:space-between;align-items:center;}
-header h1{font-size:22px;}
-header a{color:#fff;text-decoration:none;background:#667eea;padding:8px 16px;border-radius:8px;}
-.container{padding:20px;}
-.nav-buttons{display:flex;justify-content:space-between;margin-bottom:20px;}
-table{width:100%;border-collapse:collapse;}
-th,td{padding:8px;text-align:center;border-bottom:1px solid rgba(232,234,246,0.2);}
-th{background:rgba(102,126,234,0.1);}
-button{padding:6px 12px;border:none;border-radius:6px;background:#667eea;color:#fff;cursor:pointer;}
-button:disabled{background:rgba(102,126,234,0.2);cursor:not-allowed;}
+body {font-family: Arial, sans-serif; background:#0a0e27; color:#e8eaf6; margin:0; padding:20px;}
+h1 {text-align:center; margin-bottom:20px;}
+.button {background:#667eea;color:white;padding:10px 15px;border:none;border-radius:6px;cursor:pointer;margin-right:5px;}
+.button:disabled {background:gray; cursor:not-allowed;}
+#stats {margin-bottom:15px;}
+table {width:100%; border-collapse:collapse;}
+th, td {border:1px solid rgba(255,255,255,0.2); padding:8px; text-align:center;}
+th {background:rgba(102,126,234,0.2);}
 </style>
 </head>
 <body>
-<header>
-<h1>🛰️ ISS Database</h1>
-<a href="/">← Back</a>
-</header>
-<div class="container">
-<div class="nav-buttons">
-<button id="prevDay">← Previous Day</button>
-<div><strong id="dayLabel">Day 1</strong></div>
-<button id="nextDay">Next Day →</button>
+
+<h1>🛰️ ISS Database Viewer</h1>
+
+<div id="controls">
+    <button class="button" id="prevDay">← Previous Day</button>
+    <span id="currentDay">Day 1</span>
+    <button class="button" id="nextDay">Next Day →</button>
+    <button class="button" id="downloadDay">💾 Download Day CSV</button>
 </div>
-<div style="margin-bottom:10px;">
-<button id="downloadDay">💾 Download Day CSV</button>
-<button id="downloadAll">💾 Download All CSV</button>
+
+<div id="stats">
+    Total Records: <span id="totalRecords">0</span> |
+    Total Days: <span id="totalDays">0</span>
 </div>
-<table>
-<thead>
-<tr><th>ID</th><th>Latitude</th><th>Longitude</th><th>Altitude</th><th>Velocity</th><th>Timestamp (MYT)</th></tr>
-</thead>
-<tbody id="tableBody"></tbody>
+
+<table id="dataTable">
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Latitude (°)</th>
+            <th>Longitude (°)</th>
+            <th>Altitude (km)</th>
+            <th>Velocity (km/h)</th>
+            <th>Timestamp (MYT)</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr><td colspan="6">Loading data...</td></tr>
+    </tbody>
 </table>
-</div>
+
 <script>
-let allRecords = [];
+let dayIndex = 0;
 let availableDays = [];
-let currentDayIndex = 0;
 
-async function fetchRecords(){
-  const res = await fetch('/api/all-records');
-  const json = await res.json();
-  allRecords = json.records || [];
-  availableDays = json.available_days || [];
-  if(availableDays.length>0) currentDayIndex = availableDays.length-1;
-  updateTable();
+async function fetchDays() {
+    const res = await fetch('/api/all-records');
+    const json = await res.json();
+    availableDays = json.available_days || [];
+    document.getElementById('totalDays').innerText = availableDays.length;
+    updateTable();
 }
 
-function updateTable(){
-  const tbody = document.getElementById('tableBody');
-  tbody.innerHTML='';
-  if(!availableDays.length) return;
-  const day = availableDays[currentDayIndex];
-  document.getElementById('dayLabel').textContent = `Day ${currentDayIndex+1} - ${day}`;
-  const dayRecords = allRecords.filter(r=>r.day===day);
-  dayRecords.forEach(r=>{
-    const tr = document.createElement('tr');
-    tr.innerHTML=`<td>${r.id}</td><td>${r.latitude}</td><td>${r.longitude}</td><td>${r.altitude}</td><td>${r.velocity}</td><td>${r.ts_myt}</td>`;
-    tbody.appendChild(tr);
-  });
-  document.getElementById('prevDay').disabled = currentDayIndex===0;
-  document.getElementById('nextDay').disabled = currentDayIndex===availableDays.length-1;
+async function updateTable() {
+    if (!availableDays.length) return;
+    const day = availableDays[dayIndex];
+    document.getElementById('currentDay').innerText = `Day ${dayIndex+1} (${day})`;
+    
+    const res = await fetch(`/api/preview?day_index=${dayIndex}`);
+    const json = await res.json();
+    const records = json.records || [];
+
+    document.getElementById('totalRecords').innerText = records.length;
+
+    const tbody = document.getElementById('dataTable').querySelector('tbody');
+    tbody.innerHTML = '';
+    if (!records.length) {
+        tbody.innerHTML = `<tr><td colspan="6">No records for this day</td></tr>`;
+        return;
+    }
+
+    records.forEach((r,i)=>{
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td>${i+1}</td>
+            <td>${r.latitude?.toFixed(4) || '--'}</td>
+            <td>${r.longitude?.toFixed(4) || '--'}</td>
+            <td>${r.altitude?.toFixed(2) || '--'}</td>
+            <td>${r.velocity?.toFixed(2) || '--'}</td>
+            <td>${r.ts_myt || '--'}</td>
+        `;
+        tbody.appendChild(row);
+    });
 }
 
-document.getElementById('prevDay').addEventListener('click',()=>{currentDayIndex--; updateTable();});
-document.getElementById('nextDay').addEventListener('click',()=>{currentDayIndex++; updateTable();});
-document.getElementById('downloadDay').addEventListener('click',()=>{
-  if(!availableDays.length) return;
-  const day = availableDays[currentDayIndex];
-  const dayRecords = allRecords.filter(r=>r.day===day);
-  let csv = 'ID,Latitude,Longitude,Altitude,Velocity,Timestamp(MYT)\n';
-  dayRecords.forEach(r=>{csv+=`${r.id},${r.latitude},${r.longitude},${r.altitude},${r.velocity},${r.ts_myt}\n`;});
-  const blob = new Blob([csv],{type:'text/csv'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=`ISS_Day${currentDayIndex+1}.csv`; a.click();
-});
-document.getElementById('downloadAll').addEventListener('click',()=>{window.location='/api/download';});
+// Buttons
+document.getElementById('prevDay').onclick = ()=>{
+    if(dayIndex>0){ dayIndex--; updateTable(); }
+};
+document.getElementById('nextDay').onclick = ()=>{
+    if(dayIndex<availableDays.length-1){ dayIndex++; updateTable(); }
+};
+document.getElementById('downloadDay').onclick = ()=>{
+    if(!availableDays.length) return;
+    const day = availableDays[dayIndex];
+    window.location.href = `/api/download?day=${day}`;
+};
 
-fetchRecords();
+// Initialize
+fetchDays();
 </script>
+
 </body>
 </html>
