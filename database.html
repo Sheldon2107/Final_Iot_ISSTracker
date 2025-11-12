@@ -5,15 +5,21 @@
 <title>ISS Database Viewer</title>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-
 * { margin:0; padding:0; box-sizing:border-box; }
-body { font-family:'Inter', sans-serif; background:#1a1a2e; color:#e5e7eb; min-height:100vh; }
-header { display:flex; justify-content:space-between; align-items:center; padding:24px 48px; background:rgba(25,29,56,0.85); backdrop-filter:blur(20px); border-bottom:1px solid rgba(255,255,255,0.06); position:sticky; top:0; z-index:1000; }
+body { font-family:'Inter', sans-serif; background:#1a1a2e; color:#e5e7eb; min-height:100vh; position:relative; overflow-x:hidden; }
+body::before { content:''; position:fixed; width:100%; height:100%; top:0; left:0; z-index:-1;
+  background: radial-gradient(ellipse at 10% 20%, rgba(99, 102, 241, 0.2) 0%, transparent 40%),
+             radial-gradient(ellipse at 90% 70%, rgba(168, 85, 247, 0.18) 0%, transparent 40%),
+             radial-gradient(ellipse at 50% 50%, rgba(59, 130, 246, 0.12) 0%, transparent 50%);
+}
+header { background: rgba(25,29,56,0.85); backdrop-filter: blur(20px); border-bottom:1px solid rgba(255,255,255,0.06);
+  padding:24px 48px; display:flex; justify-content:space-between; align-items:center; position:sticky; top:0; z-index:1000; }
 .logo { display:flex; align-items:center; gap:16px; }
-.logo-icon { width:48px; height:48px; background:linear-gradient(135deg,#6366f1,#a855f7); border-radius:12px; display:flex; align-items:center; justify-content:center; font-size:24px; }
-.logo-text h1 { font-size:24px; font-weight:700; background:linear-gradient(135deg,#6366f1,#a855f7); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
-.logo-text p { font-size:13px; color:rgba(229,231,235,0.6); margin-top:2px; }
-.back-button { background:linear-gradient(135deg,#6366f1,#8b5cf6); border:none; color:white; padding:12px 24px; border-radius:12px; font-weight:600; cursor:pointer; text-decoration:none; display:flex; align-items:center; gap:8px; }
+.logo-icon { width:48px; height:48px; background:linear-gradient(135deg,#6366f1,#a855f7); border-radius:12px; display:flex; align-items:center; justify-content:center; font-size:24px; box-shadow:0 8px 32px rgba(99,102,241,0.3); }
+.logo-text h1 { font-size:24px; font-weight:700; letter-spacing:-0.5px; background:linear-gradient(135deg,#6366f1,#a855f7); -webkit-background-clip:text; -webkit-text-fill-color:transparent; }
+.logo-text p { font-size:13px; color:rgba(229,231,235,0.6); font-weight:400; margin-top:2px; }
+.back-button, .download-button { background:linear-gradient(135deg,#10b981,#059669); border:none; color:white; padding:12px 24px; border-radius:12px; font-weight:600; cursor:pointer; font-size:14px; text-decoration:none; display:flex; align-items:center; gap:8px; }
+.download-all { background:linear-gradient(135deg,#f97316,#ea580c); }
 .container { max-width:1400px; margin:48px auto; padding:0 48px; }
 .stats-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:24px; margin-bottom:32px; }
 .stat-card { background:rgba(25,29,56,0.65); backdrop-filter:blur(20px); border:1px solid rgba(255,255,255,0.08); padding:28px; border-radius:16px; }
@@ -32,155 +38,161 @@ th, td { padding:18px 24px; font-size:14px; color:rgba(229,231,235,0.9); text-al
 .alt-col { color:#10b981; font-weight:700; }
 .time-col { color:rgba(229,231,235,0.6); font-size:13px; font-family:'Monaco',monospace; }
 .loading, .no-data { text-align:center; padding:64px 32px; color:rgba(229,231,235,0.5); font-size:15px; }
-.download-button { background:linear-gradient(135deg,#10b981,#059669); border:none; color:white; padding:18px 36px; border-radius:12px; font-weight:700; cursor:pointer; font-size:16px; margin-top:32px; display:inline-flex; align-items:center; gap:12px; }
-.download-button:hover { transform:translateY(-2px); }
 </style>
 </head>
 <body>
+
 <header>
-<div class="logo">
-<div class="logo-icon">🛰️</div>
-<div class="logo-text">
-<h1>Database Viewer</h1>
-<p>ISS Position Records Archive</p>
-</div>
-</div>
-<a href="/" class="back-button">← Back to Dashboard</a>
+  <div class="logo">
+    <div class="logo-icon">🛰️</div>
+    <div class="logo-text">
+      <h1>Database Viewer</h1>
+      <p>ISS Position Records Archive</p>
+    </div>
+  </div>
+  <div style="display:flex; gap:12px;">
+    <button class="download-button" onclick="downloadCSV()">💾 Download Day CSV</button>
+    <button class="download-button download-all" onclick="downloadAllCSV()">🌐 Download All Days Combined</button>
+    <a href="/" class="back-button">← Back to Dashboard</a>
+  </div>
 </header>
 
 <div class="container">
-<div class="stats-grid">
-<div class="stat-card">
-<div class="stat-label">Total Records</div>
-<div class="stat-value" id="totalRecords">0</div>
-</div>
-<div class="stat-card">
-<div class="stat-label">Total Days</div>
-<div class="stat-value" id="totalDays">0</div>
-</div>
-</div>
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-label">Total Records</div>
+      <div class="stat-value" id="totalRecords">0</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Total Days</div>
+      <div class="stat-value" id="totalDays">0</div>
+    </div>
+  </div>
 
-<div class="day-navigator">
-<button class="nav-button" id="prevDay" onclick="changeDay(-1)">← Previous</button>
-<div class="current-day" id="currentDay">Loading...</div>
-<button class="nav-button" id="nextDay" onclick="changeDay(1)">Next →</button>
-</div>
+  <div class="day-navigator">
+    <button class="nav-button" id="prevDay" onclick="changeDay(-1)">← Previous</button>
+    <div class="current-day" id="currentDay">Loading...</div>
+    <button class="nav-button" id="nextDay" onclick="changeDay(1)">Next →</button>
+  </div>
 
-<div class="table-container">
-<table>
-<thead>
-<tr>
-<th>ID</th>
-<th>Latitude (°)</th>
-<th>Longitude (°)</th>
-<th>Altitude (km)</th>
-<th>Timestamp (MYT)</th>
-</tr>
-</thead>
-<tbody id="tableBody">
-<tr><td colspan="5" class="loading">Loading data...</td></tr>
-</tbody>
-</table>
-</div>
-
-<button class="download-button" onclick="downloadCSV()">📥 Download All Data (CSV)</button>
+  <div class="table-container">
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Latitude (°)</th>
+          <th>Longitude (°)</th>
+          <th>Altitude (km)</th>
+          <th>Velocity (km/h)</th>
+          <th>Timestamp (MYT)</th>
+        </tr>
+      </thead>
+      <tbody id="tableBody">
+        <tr><td colspan="6" class="loading">Loading data...</td></tr>
+      </tbody>
+    </table>
+  </div>
 </div>
 
 <script>
 let records = [];
-let currentDayIndex = 0;
 let days = [];
+let currentDayIndex = 0;
 let userManuallyChangedDay = false;
 
-async function fetchAllData(){
-    try{
-        const res = await fetch('/api/preview');
-        const data = await res.json();
-        const newRecords = data.records || [];
-
-        if(newRecords.length === 0){
-            document.getElementById('tableBody').innerHTML = '<tr><td colspan="5" class="no-data">No data available</td></tr>';
-            document.getElementById('currentDay').innerText = '—';
-            document.getElementById('totalRecords').innerText = '0';
-            document.getElementById('totalDays').innerText = '0';
-            records = []; days = [];
-            return;
-        }
-
-        const oldLatestDay = days.length > 0 ? days[days.length-1] : null;
-
-        records = newRecords;
-
-        // extract unique days
-        const daySet = new Set();
-        records.forEach(r=>{
-            const day = r.ts_myt.replace(/^'+|'+$/g,'').split(' ')[0];
-            daySet.add(day);
-            r.day = day;
-        });
-        days = Array.from(daySet).sort();
-
-        const latestDay = days[days.length-1];
-        if(latestDay !== oldLatestDay && !userManuallyChangedDay){
-            currentDayIndex = days.length-1;
-        }
-
-        if(currentDayIndex === days.length-1) userManuallyChangedDay = false;
-
-        updateSummary();
-        renderTable();
-    }catch(err){
-        console.error('Failed to fetch data', err);
-        document.getElementById('tableBody').innerHTML = '<tr><td colspan="5" class="no-data">Failed to load data</td></tr>';
-    }
+async function fetchNow() {
+  try {
+    const res = await fetch('/api/fetch-now');
+    const data = await res.json();
+    if (data.success) console.log('✅ New ISS data fetched.');
+  } catch (err) {
+    console.error('⚠️ Fetch-now failed:', err);
+  }
 }
 
-function updateSummary(){
-    document.getElementById('totalRecords').innerText = records.length.toLocaleString();
-    const uniqueDays = [...new Set(records.map(r=>r.ts_myt.replace(/^'+|'+$/g,'').split(' ')[0]))];
-    document.getElementById('totalDays').innerText = uniqueDays.length;
-}
+async function fetchAllData() {
+  try {
+    const res = await fetch('/api/all-records');
+    const data = await res.json();
+    records = data.records || [];
+    days = data.available_days || [];
 
-function renderTable(){
-    if(days.length===0) return;
-    const day = days[currentDayIndex];
-    document.getElementById('currentDay').innerText = day;
-    const dayRecords = records.filter(r=>r.day===day);
-    const tbody = document.getElementById('tableBody');
-
-    if(dayRecords.length===0){
-        tbody.innerHTML = '<tr><td colspan="5" class="no-data">No records for this day</td></tr>';
-        return;
+    if (days.length === 0) {
+      document.getElementById('tableBody').innerHTML = '<tr><td colspan="6" class="no-data">No data available</td></tr>';
+      document.getElementById('currentDay').innerText = '—';
+      document.getElementById('totalRecords').innerText = '0';
+      document.getElementById('totalDays').innerText = '0';
+      return;
     }
 
-    tbody.innerHTML = dayRecords.map((r,i)=>`
-        <tr>
-        <td class="id-col">#${i+1}</td>
-        <td class="coord-col">${r.latitude.toFixed(4)}</td>
-        <td class="coord-col">${r.longitude.toFixed(4)}</td>
-        <td class="alt-col">${r.altitude ? r.altitude.toFixed(2) : 'N/A'}</td>
-        <td class="time-col">${r.ts_myt.replace(/^'+|'+$/g,'')}</td>
-        </tr>
-    `).join('');
+    days.sort((a,b)=>new Date(b)-new Date(a));
+    if (!userManuallyChangedDay) currentDayIndex = 0;
 
-    document.getElementById('prevDay').disabled = currentDayIndex===0;
-    document.getElementById('nextDay').disabled = currentDayIndex===days.length-1;
-}
-
-function changeDay(direction){
-    userManuallyChangedDay = true;
-    currentDayIndex += direction;
-    if(currentDayIndex<0) currentDayIndex=0;
-    if(currentDayIndex>=days.length) currentDayIndex=days.length-1;
+    updateSummary(data);
     renderTable();
+  } catch (err) {
+    console.error('Failed to load data:', err);
+    document.getElementById('tableBody').innerHTML = '<tr><td colspan="6" class="no-data">Failed to load data</td></tr>';
+  }
 }
 
-function downloadCSV(){
-    window.location.href='/api/download';
+function updateSummary(data) {
+  document.getElementById('totalRecords').innerText = (data.total || records.length).toLocaleString();
+  document.getElementById('totalDays').innerText = days.length;
 }
 
+function renderTable() {
+  if (days.length === 0) return;
+  if (currentDayIndex < 0) currentDayIndex = 0;
+  if (currentDayIndex >= days.length) currentDayIndex = days.length - 1;
+
+  const day = days[currentDayIndex];
+  document.getElementById('currentDay').innerText = day;
+
+  const dayRecords = records.filter(r => r.day === day);
+  const tbody = document.getElementById('tableBody');
+
+  if (!dayRecords.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="no-data">No records for this day</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = dayRecords.map((r, i) => `
+    <tr>
+      <td class="id-col">#${r.id || i+1}</td>
+      <td class="coord-col">${(r.latitude ?? 0).toFixed(4)}</td>
+      <td class="coord-col">${(r.longitude ?? 0).toFixed(4)}</td>
+      <td class="alt-col">${r.altitude ? r.altitude.toFixed(2) : 'N/A'}</td>
+      <td>${r.velocity ? r.velocity.toFixed(2) : 'N/A'}</td>
+      <td class="time-col">${r.ts_myt.replace(/^'+|'+$/g,'')}</td>
+    </tr>
+  `).join('');
+
+  document.getElementById('prevDay').disabled = currentDayIndex >= days.length - 1;
+  document.getElementById('nextDay').disabled = currentDayIndex <= 0;
+}
+
+function changeDay(direction) {
+  userManuallyChangedDay = true;
+  currentDayIndex -= direction;
+  renderTable();
+}
+
+function downloadCSV() {
+  if (days.length === 0) return;
+  const day = days[currentDayIndex];
+  window.location.href = `/api/download?day=${day}`;
+}
+
+function downloadAllCSV() {
+  window.location.href = `/api/download`;
+}
+
+// --- Loops ---
 fetchAllData();
-setInterval(fetchAllData,15000); // refresh every 15 seconds
+setInterval(fetchAllData, 15000); // refresh table
+setInterval(fetchNow, 60000);     // fetch new ISS data
 </script>
+
 </body>
 </html>
