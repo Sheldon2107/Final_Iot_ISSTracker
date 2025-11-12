@@ -26,45 +26,33 @@ def safe_float(v):
     except Exception:
         return None
 
-def fetch_and_save_iss_data():
-    """Fetch ISS data once and save to CSV."""
-    try:
-        res = requests.get('https://api.wheretheiss.at/v1/satellites/25544', timeout=8)
-        if res.status_code == 200:
-            d = res.json()
-            timestamp = int(d.get('timestamp', time.time()))
-            latitude = safe_float(d.get('latitude'))
-            longitude = safe_float(d.get('longitude'))
-            altitude = safe_float(d.get('altitude'))
-            velocity = safe_float(d.get('velocity'))
-
-            ts_myt = datetime.fromtimestamp(timestamp, tz=MYT).strftime('%Y-%m-%d %H:%M:%S')
-            ts_myt_excel = "'" + ts_myt  # Excel-friendly
-
-            with open(DATA_FILE, 'a', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow([timestamp, latitude, longitude, altitude, velocity, ts_myt_excel])
-            return True
-    except Exception as e:
-        print("Error fetching ISS data:", e)
-    return False
-
 def fetch_iss_data():
-    """Background thread fetch loop (may not run in Render)."""
     while not stop_event.is_set():
-        fetch_and_save_iss_data()
+        try:
+            res = requests.get('https://api.wheretheiss.at/v1/satellites/25544', timeout=8)
+            if res.status_code == 200:
+                d = res.json()
+                timestamp = int(d.get('timestamp', time.time()))
+                latitude = safe_float(d.get('latitude'))
+                longitude = safe_float(d.get('longitude'))
+                altitude = safe_float(d.get('altitude'))
+                velocity = safe_float(d.get('velocity'))
+
+                # --- UPDATED: Malaysian time in ISO format for CSV ---
+                ts_myt = datetime.fromtimestamp(timestamp, tz=MYT).strftime('%Y-%m-%d %H:%M:%S')
+                # Optional: prepend single quote for Excel-safe text
+                ts_myt_excel = "'" + ts_myt
+
+                with open(DATA_FILE, 'a', newline='') as f:
+                    writer = csv.writer(f)
+                    writer.writerow([timestamp, latitude, longitude, altitude, velocity, ts_myt_excel])
+        except Exception as e:
+            print("Error fetching ISS data:", e)
         stop_event.wait(FETCH_INTERVAL)
 
-# Start background fetching thread (safe locally)
-if os.environ.get("RENDER") is None:
-    t = Thread(target=fetch_iss_data, daemon=True)
-    t.start()
-
-# --- API routes ---
-@app.route('/api/fetch-now')
-def api_fetch_now():
-    success = fetch_and_save_iss_data()
-    return jsonify({'success': success})
+# Start background fetching thread
+t = Thread(target=fetch_iss_data, daemon=True)
+t.start()
 
 @app.route('/api/preview')
 def api_preview():
@@ -118,6 +106,14 @@ def api_all_records():
     if not os.path.exists(DATA_FILE):
         return jsonify({"records": [], "total": 0, "page":1, "per_page":1, "total_pages":1, "available_days": []})
 
+    try:
+        page = max(1, int(request.args.get('page', 1)))
+    except Exception:
+        page = 1
+    try:
+        per_page = min(5000, max(1, int(request.args.get('per_page', 1000))))
+    except Exception:
+        per_page = 1000
     day_filter = request.args.get('day', None)
 
     rows = []
@@ -143,25 +139,31 @@ def api_all_records():
 
     rows_sorted = sorted(rows, key=lambda x: x['timestamp_unix'], reverse=True)
     days = sorted(list({r['day'] for r in rows}), reverse=True)
+
     filtered = [r for r in rows_sorted if (day_filter is None or r['day'] == day_filter)]
+
     total = len(filtered)
+    total_pages = (total + per_page - 1) // per_page if total else 1
+    start = (page - 1) * per_page
+    end = start + per_page
+    page_records = filtered[start:end]
 
     return jsonify({
-        "records": filtered,
+        "records": page_records,
         "total": total,
-        "page": 1,
-        "per_page": total,
-        "total_pages": 1,
+        "page": page,
+        "per_page": per_page,
+        "total_pages": total_pages,
         "available_days": days
     })
 
-# --- Serve pages ---
+# Serve frontend files
 @app.route('/')
 def serve_index():
     return send_from_directory('.', 'index.html')
 
 @app.route('/database')
-def serve_db():
+def serve_database():
     return send_from_directory('.', 'database.html')
 
 @app.route('/api/download')
