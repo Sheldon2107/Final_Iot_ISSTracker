@@ -100,24 +100,17 @@ let days = [];
 let currentDayIndex = 0;
 let userManuallyChangedDay = false;
 
-async function fetchNow() {
-  try {
-    const res = await fetch('/api/fetch-now');
-    const data = await res.json();
-    if (data.success) console.log('✅ New ISS data fetched.');
-  } catch (err) {
-    console.error('⚠️ Fetch-now failed:', err);
-  }
-}
-
+// --- Fetch all data from backend ---
 async function fetchAllData() {
   try {
     const res = await fetch('/api/all-records');
     const data = await res.json();
     records = data.records || [];
-    days = data.available_days || [];
 
-    if (days.length === 0) {
+    // extract unique days
+    days = Array.from(new Set(records.map(r => r.day))).sort((a,b)=>new Date(a)-new Date(b));
+
+    if(days.length === 0){
       document.getElementById('tableBody').innerHTML = '<tr><td colspan="6" class="no-data">No data available</td></tr>';
       document.getElementById('currentDay').innerText = '—';
       document.getElementById('totalRecords').innerText = '0';
@@ -125,74 +118,69 @@ async function fetchAllData() {
       return;
     }
 
-    days.sort((a,b)=>new Date(b)-new Date(a));
-    if (!userManuallyChangedDay) currentDayIndex = 0;
+    if(!userManuallyChangedDay) currentDayIndex = days.length - 1; // default to latest day
 
-    updateSummary(data);
+    updateSummary();
     renderTable();
-  } catch (err) {
-    console.error('Failed to load data:', err);
+  } catch(err) {
+    console.error(err);
     document.getElementById('tableBody').innerHTML = '<tr><td colspan="6" class="no-data">Failed to load data</td></tr>';
   }
 }
 
-function updateSummary(data) {
-  document.getElementById('totalRecords').innerText = (data.total || records.length).toLocaleString();
+function updateSummary(){
+  document.getElementById('totalRecords').innerText = records.length.toLocaleString();
   document.getElementById('totalDays').innerText = days.length;
 }
 
-function renderTable() {
-  if (days.length === 0) return;
-  if (currentDayIndex < 0) currentDayIndex = 0;
-  if (currentDayIndex >= days.length) currentDayIndex = days.length - 1;
+function renderTable(){
+  if(days.length === 0) return;
+
+  // clamp index
+  if(currentDayIndex < 0) currentDayIndex = 0;
+  if(currentDayIndex >= days.length) currentDayIndex = days.length - 1;
 
   const day = days[currentDayIndex];
-  document.getElementById('currentDay').innerText = day;
+  document.getElementById('currentDay').innerText = `Day ${currentDayIndex + 1} (${day})`;
 
   const dayRecords = records.filter(r => r.day === day);
   const tbody = document.getElementById('tableBody');
 
-  if (!dayRecords.length) {
+  if(!dayRecords.length){
     tbody.innerHTML = '<tr><td colspan="6" class="no-data">No records for this day</td></tr>';
     return;
   }
 
-  tbody.innerHTML = dayRecords.map((r, i) => `
+  tbody.innerHTML = dayRecords.map((r,i)=>`
     <tr>
       <td class="id-col">#${r.id || i+1}</td>
       <td class="coord-col">${(r.latitude ?? 0).toFixed(4)}</td>
-      <td class="coord-col">${(r.longitude ?? 0).toFixed(4)}</td>
+      <td class="coord-col">${(r.longitude ?? 0).toFixed4()}</td>
       <td class="alt-col">${r.altitude ? r.altitude.toFixed(2) : 'N/A'}</td>
       <td>${r.velocity ? r.velocity.toFixed(2) : 'N/A'}</td>
       <td class="time-col">${r.ts_myt.replace(/^'+|'+$/g,'')}</td>
     </tr>
   `).join('');
 
-  document.getElementById('prevDay').disabled = currentDayIndex >= days.length - 1;
-  document.getElementById('nextDay').disabled = currentDayIndex <= 0;
+  document.getElementById('prevDay').disabled = currentDayIndex <= 0;
+  document.getElementById('nextDay').disabled = currentDayIndex >= days.length - 1;
 }
 
-function changeDay(direction) {
+function changeDay(direction){
   userManuallyChangedDay = true;
-  currentDayIndex -= direction;
+  currentDayIndex -= direction; // newest day is last in array
   renderTable();
 }
 
-function downloadCSV() {
-  if (days.length === 0) return;
-  const day = days[currentDayIndex];
-  window.location.href = `/api/download?day=${day}`;
+function downloadCSV(){
+  window.location.href = '/api/download';
 }
 
-function downloadAllCSV() {
-  window.location.href = `/api/download`;
-}
-
-// --- Loops ---
+// --- Start loop ---
 fetchAllData();
-setInterval(fetchAllData, 15000); // refresh table
-setInterval(fetchNow, 60000);     // fetch new ISS data
+setInterval(fetchAllData, 15000);
 </script>
+
 
 </body>
 </html>
